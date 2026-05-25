@@ -11,7 +11,6 @@ use wayland_protocols::ext::data_control::v1::client::{
     ext_data_control_offer_v1::{self, ExtDataControlOfferV1},
 };
 
-/// Active tracking state context for clipboard diagnostics
 struct SimpleState {
     manager: Option<ExtDataControlManagerV1>,
     seat: Option<wl_seat::WlSeat>,
@@ -60,13 +59,11 @@ impl Dispatch<ExtDataControlDeviceV1, ()> for SimpleState {
                 println!("🎉 [Detected] Clipboard payload active!");
                 println!("=== Allocating standard stream infrastructure ===");
                 
-                // Rustのstdだけで安全にノンブロッキングなパイプを作る（libcの生ポインタ＆非推奨の手動ラップを撲滅）
                 let Ok((read_pipe, write_pipe)) = os_pipe::pipe() else {
                     eprintln!("Critical: Failed to initialize pipeline primitives.");
                     return;
                 };
 
-                // os_pipe から fd への変換をスマートに行う
                 let read_fd = OwnedFd::from(read_pipe);
                 let write_fd = OwnedFd::from(write_pipe);
 
@@ -132,7 +129,6 @@ fn main() {
 
     let mut state = SimpleState { manager: None, seat: None, device: None };
 
-    // 安定同期：グローバルマネージャーが降ってくるまでディスパッチ
     event_queue.roundtrip(&mut state).unwrap();
 
     let (Some(manager), Some(seat)) = (&state.manager, &state.seat) else {
@@ -143,7 +139,6 @@ fn main() {
     state.device = Some(manager.get_data_device(seat, &qh, ()));
     println!("=== Syncing clip envelopes ===");
     
-    // 多めの手動連打を撲滅し、roundtripでキューを一発で完璧にフラッシュ
     event_queue.roundtrip(&mut state).unwrap();
     
     println!("=== Execution scope completed ===");

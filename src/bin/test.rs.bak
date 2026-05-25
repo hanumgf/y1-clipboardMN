@@ -11,7 +11,6 @@ use wayland_protocols::ext::data_control::v1::client::{
     ext_data_control_source_v1::{self, ExtDataControlSourceV1},
 };
 
-/// Context tracking structure for historical clipboard egress alignment passes
 struct CopyTestState {
     manager: Option<ExtDataControlManagerV1>,
     seat: Option<WlSeat>,
@@ -19,7 +18,6 @@ struct CopyTestState {
     tx_buf: Vec<u8>,
 }
 
-// 1. Core Source Dispatch Handler (Egress Data Provision Gatekeeper)
 impl Dispatch<ExtDataControlSourceV1, ()> for CopyTestState {
     fn event(
         state: &mut Self,
@@ -33,12 +31,6 @@ impl Dispatch<ExtDataControlSourceV1, ()> for CopyTestState {
             ext_data_control_source_v1::Event::Send { mime_type, fd } => {
                 println!("➡️ [Gatekeeper] Compositor data control request signaled. (MIME: {mime_type})");
                 if mime_type == state.target_mime {
-                    // 🚀 なめ回しポイント：`unsafe` と `ManuallyDrop` を完全撲滅！
-                    // wayland-client 0.31からは `fd` をそのまま `OwnedFd` として扱えます。
-                    // 借用である `.as_fd()` を経由して `File::from` するのではなく、
-                    // そもそも `fd`（OwnedFd）のクローンを安全に作成して File に移譲します。
-                    // これにより、この File がスコープを抜けて drop されても、
-                    // 元の `fd` の所有権は wayland-client 側が保持し続けるため、完全に安全でクリアなコードになります。
                     if let Ok(cloned_fd) = fd.try_clone() {
                         let mut file = File::from(cloned_fd);
                         if let Err(e) = file.write_all(&state.tx_buf) {
@@ -59,7 +51,6 @@ impl Dispatch<ExtDataControlSourceV1, ()> for CopyTestState {
     }
 }
 
-// 2. Core Device Dispatch Handler
 impl Dispatch<ExtDataControlDeviceV1, ()> for CopyTestState {
     fn event(_: &mut Self, _: &ExtDataControlDeviceV1, _: ext_data_control_device_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
     
@@ -87,13 +78,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     println!("1. Aligning protocol manager nodes (Executing high-speed loop synchronizations)...");
     
-    // 🚀 なめ回しポイント：連打リトライループを撲滅し、一発で同期完了させる
-    // `roundtrip` メソッドにより、コンポジタとのリクエスト往復（ディスプレイサーバー側が
-    // レジストリイベントをすべて吐き出す処理）が完璧に完了するまで確実にブロックします。
-    // そのため、不安定な10回ループを回す必要がなくなります。
     event_queue.roundtrip(&mut state)?;
 
-    // 🚀 なめ回しポイント：`let-else` イディオムによる平坦化
     let (Some(manager), Some(seat)) = (state.manager.as_ref(), state.seat.as_ref()) else {
         eprintln!("❌ Critical Error: Missing required clipboard protocol extensions inside active environment.");
         std::process::exit(1);
@@ -116,7 +102,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 }
 
-// --- Protocol Ingestion Layout Boilerplates ---
 impl Dispatch<wl_registry::WlRegistry, ()> for CopyTestState {
     fn event(state: &mut Self, reg: &wl_registry::WlRegistry, ev: wl_registry::Event, _: &(), _: &Connection, qh: &QueueHandle<Self>) {
         if let wl_registry::Event::Global { name, interface, version } = ev {
