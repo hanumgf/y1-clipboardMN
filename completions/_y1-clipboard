@@ -1,0 +1,50 @@
+#compdef y1-clipboard
+
+_y1_clipboard() {
+    local context state line
+    typeset -A opt_args
+
+    _arguments -C \
+        '(-v --verbose)'{-v,--verbose}'[Enable detailed logging]' \
+        '(-h --help)'{-h,--help}'[Show help information]' \
+        '(-V --version)'{-V,--version}'[Show version]' \
+        "1: :((
+            daemon\:'Start background monitor'
+            list\:'Show history entries'
+            search\:'Search text with keyword'
+            copy-to\:'Restore entry to clipboard'
+            show\:'Inspect detailed content'
+            store\:'Save data from stdin'
+            paste-from\:'Output system clipboard'
+            delete\:'Remove specific entry'
+            wipe\:'Clear all history'
+            help\:'Print help'
+        ))" \
+        "*::arg:->args"
+
+    case $line[1] in
+        list)
+            _arguments \
+                '--raw[Clean output for scripting]' \
+                '(--full all)'{--full,all}'[Show all history (limit 256)]'
+            ;;
+        search)
+            _arguments \
+                '--raw[Clean output for scripting]' \
+                ':keyword: '
+            ;;
+        show)
+            _arguments \
+                '--raw[Output exact binary data]' \
+                ':id: '
+            ;;
+        copy-to|delete)
+            _arguments ':id: '
+            ;;
+        store|paste-from)
+            _arguments ':mime type:(text/plain image/png image/jpeg text/html)'
+            ;;
+    esac
+}
+
+_y1_clipboard "$@"
