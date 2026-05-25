@@ -4,45 +4,64 @@ _y1_clipboard() {
     local context state line
     typeset -A opt_args
 
-    _arguments -C \
-        '(-v --verbose)'{-v,--verbose}'[Enable detailed logging]' \
-        '(-h --help)'{-h,--help}'[Show help information]' \
-        '(-V --version)'{-V,--version}'[Show version]' \
-        "1: :((
-            daemon\:'Start background monitor'
-            list\:'Show history entries'
-            search\:'Search text with keyword'
-            copy-to\:'Restore entry to clipboard'
-            show\:'Inspect detailed content'
-            store\:'Save data from stdin'
-            paste-from\:'Output system clipboard'
-            delete\:'Remove specific entry'
-            wipe\:'Clear all history'
-            help\:'Print help'
-        ))" \
-        "*::arg:->args"
+    # 1. サブコマンドのリスト
+    local -a subcommands
+    subcommands=(
+        'daemon:Start the background monitor'
+        'list:Display history entries'
+        'search:Keyword search through history'
+        'copy-to:Restore entry to system clipboard'
+        'show:Inspect content or dump raw bytes'
+        'store:Save stdin to database'
+        'paste-from:Output clipboard to stdout'
+        'delete:Remove specific entry'
+        'wipe:Clear all history'
+        'version:Show version'
+        'help:Show help'
+    )
 
-    case $line[1] in
-        list)
-            _arguments \
-                '--raw[Clean output for scripting]' \
-                '(--full all)'{--full,all}'[Show all history (limit 256)]'
+    # 2. メインの引数解析
+    # ブレース展開を使わず、1つずつ定義することでパースエラーを防止
+    _arguments -C \
+        '--verbose[Enable detailed logging]' \
+        '-v[Enable detailed logging]' \
+        '--help[Show help information]' \
+        '-h[Show help information]' \
+        '--version[Show version]' \
+        '-V[Show version]' \
+        '1: :->cmds' \
+        '*:: :->args'
+
+    case $state in
+        cmds)
+            _describe -t commands 'y1-clipboard commands' subcommands
             ;;
-        search)
-            _arguments \
-                '--raw[Clean output for scripting]' \
-                ':keyword: '
-            ;;
-        show)
-            _arguments \
-                '--raw[Output exact binary data]' \
-                ':id: '
-            ;;
-        copy-to|delete)
-            _arguments ':id: '
-            ;;
-        store|paste-from)
-            _arguments ':mime type:(text/plain image/png image/jpeg text/html)'
+        args)
+            case $line[1] in
+                list)
+                    _arguments \
+                        '--raw[Clean output for scripting]' \
+                        '--full[Show all history]' \
+                        'all[Show all history]' \
+                        '::range (n or n-n1):'
+                    ;;
+                search)
+                    _arguments \
+                        '--raw[Clean output for scripting]' \
+                        ':query text:'
+                    ;;
+                show)
+                    _arguments \
+                        '--raw[Dump exact binary data]' \
+                        ':id:'
+                    ;;
+                copy-to|delete)
+                    _arguments ':id:'
+                    ;;
+                store|paste-from)
+                    _arguments ':mime:(text/plain image/png image/jpeg text/html)'
+                    ;;
+            esac
             ;;
     esac
 }
