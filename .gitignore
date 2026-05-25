@@ -1,0 +1,20 @@
+# --- Rust Artifacts ---
+/target/
+
+# --- y1-clipboard Database ---
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+
+# --- Neovim / Editor Junk ---
+*.swp
+*.swo
+*~
+
+*.un~
+
+Session.vim
+
+# --- OS Junk ---
+.DS_Store
+Thumbs.db

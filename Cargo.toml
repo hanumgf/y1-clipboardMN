@@ -1,0 +1,30 @@
+[package]
+name = "y1-clipboard"
+version = "1.0.0"
+edition = "2021"
+authors = ["Your Name"]
+description = "A robust, unified clipboard manager for Wayland with SQLite storage."
+
+[dependencies]
+# --- Wayland Core ---
+wayland-client = "0.31.14"
+wayland-protocols = { version = "0.32.12", features = ["client", "staging"] }
+smithay-client-toolkit = "0.20.0"
+
+# --- Storage (SQLite) ---
+# Enabling the "bundled" feature ensures standalone compilation and runtime robustness 
+# across target environments without relying on system-installed SQLite packages.
+rusqlite = { version = "0.39.0", features = ["bundled"] }
+
+# --- Utilities ---
+# Utilized for robust pipe communications and avoiding runtime deadlocks.
+libc = "0.2.186"
+# Utilized for payload deduplication and tracking binary identity via unique content fingerprints.
+md5 = "0.8.0"
+# Utilized for calculating full-width and half-width terminal layout bounds accurately.
+unicode-width = "0.2.2"
+
+[profile.release]
+strip = true      # Strips debug symbols from the final artifact to minimize binary footprint size dramatically.
+lto = true        # Enables Link-Time Optimization (LTO) to prioritize maximal binary execution performance.
+codegen-units = 1 # Restricts compilation units to a single segment to deliver higher quality optimization passes.
