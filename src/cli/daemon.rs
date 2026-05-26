@@ -5,21 +5,19 @@ use crate::storage::ClipboardDb;
 use crate::daemon;
 use crate::core::constants::*;
 
-/// Start the clipboard monitoring daemon.
+/// Initialize and execute the background monitoring service.
 pub fn run(db: ClipboardDb, verbose: bool) {
-    // Explicitly notify the user that the daemon has started.
-    // This is displayed regardless of the verbose flag to confirm the process is alive.
+    // Notify the operator that the daemon initialization has commenced
     println!("{}{}", LOG_INFO, MSG_DAEMON_START);
     
     if verbose {
-        println!("{}verbose logging is enabled.", LOG_INFO);
+        println!("{}extended event logging is active.", LOG_INFO);
     }
 
-    // Hand over control to the core monitoring logic (src/daemon/mod.rs).
-    // This function typically blocks and runs indefinitely until terminated via Ctrl+C.
+    // Transfer execution to the core daemon logic (src/daemon/mod.rs)
+    // This call is blocking and monitors Wayland events until an interrupt or error occurs.
     daemon::start_daemon(db, verbose);
 
-    // Reaching this point implies an unexpected termination of the monitoring loop.
-    // (Currently, this block handles cases where the event loop breaks)
+    // Termination at this point indicates the internal event loop has collapsed
     eprintln!("{}{}", LOG_ERROR, MSG_DAEMON_STOP);
 }

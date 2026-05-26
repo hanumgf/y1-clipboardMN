@@ -16,70 +16,63 @@ mod utils;
 use crate::storage::ClipboardDb;
 use crate::core::constants::*;
 
-/// Command Dispatcher: Safely routes all execution flows to their respective modules.
+/// Primary entry point for routing CLI commands to specialized modules.
 pub fn handle_command(args: &[String], db: ClipboardDb) {
-    // 1. Evaluate argument presence and help requests with the highest priority
-    if args.len() < 2 || args.iter().any(|a| a == "-h" || a == "--help") {
+    // 1. Intercept help or version requests and empty argument vectors
+    if args.len() < 2 || utils::has_flag(args, "--help", "-h") {
         help::print_help();
         return;
     }
-
-    let cmd = args[1].as_str();
     
-    // 2. Evaluate verbose logging flag presence
-    let verbose = args.iter().any(|a| a == "--verbose" || a == "-v");
+    if utils::has_flag(args, "--version", "-V") {
+        help::print_version();
+        return;
+    }
 
-    // 3. Execute command routing matrix
+    // 2. Extract command identifier; reject if formatted as an option (e.g., --list)
+    let cmd = args[1].as_str();
+    if utils::is_option(cmd) {
+        eprintln!("{}invalid command format: '{}'", LOG_ERROR, cmd);
+        println!("run 'y1-clip --help' for valid command syntax.");
+        std::process::exit(1);
+    }
+
+    // 3. Evaluate global operational flags
+    let verbose = utils::has_flag(args, "--verbose", "-v");
+
+    // 4. Command routing matrix
     match cmd {
-        // --- Public Commands ---
-        "daemon"         => daemon::run(db, verbose),
-        "list"           => list::run(args, db),
-        "search"         => search::run(args, db),
-        "show"           => show::run(args, db),
-        "copy-to"        => copy_to::run(args, db, verbose),
-        "store"          => store::run(args, db, verbose),
-        "delete"         => cleaning::delete_run(args, db),
-        "wipe"           => cleaning::wipe_run(db),
-        "paste-from"     => paste_from::run(args),
-        "version" | "-V" => help::print_version(),
-        "help"           => help::print_help(),
+        "daemon"     => daemon::run(db, verbose),
+        "list"       => list::run(args, db),
+        "search"     => search::run(args, db),
+        "show"       => show::run(args, db),
+        "copy-to"    => copy_to::run(args, db, verbose),
+        "store"      => store::run(args, db, verbose),
+        "delete"     => cleaning::delete_run(args, db),
+        "wipe"       => cleaning::wipe_run(db, args),
+        "paste-from" => paste_from::run(args),
+        "help"       => help::print_help(),
+        "version"    => help::print_version(),
 
-        // --- Internal Only: Background Egress Serving Server (serve-internal) ---
-        // Robustness Optimizations:
-        //   - Strict argument pattern validations
-        //   - Early drop of active database resources (Critical!)
-        //   - Enforced process lifecycle termination paths
+        // --- Internal: Background selection provider server ---
         "serve-internal" => {
-            // Arguments Layout -> [2]: ID target string, [3]: Verbose boolean string
             if let (Some(id_str), Some(v_str)) = (args.get(2), args.get(3)) {
                 let is_verbose = v_str == "true";
-                
                 if let Ok(real_id) = id_str.parse::<i64>() {
-                    // Fetch and load target payload array into memory cache from DB
                     if let Some((mime, val)) = db.get_content_by_id(real_id) {
-                        
-                        // Resource Robustness:
-                        // Disconnect the active SQLite connection before entering the blocking Wayland event loop.
-                        // This eliminates the risk of background processes holding persistent storage file locks.
+                        // Drop DB handle to release file locks before entering blocking loop
                         drop(db); 
-                        
-                        // Start serving the payload to the OS layers (Blocks indefinitely within this loop execution)
                         crate::wayland::copy_to_os(&mime, val, is_verbose);
-                    } else if is_verbose {
-                        eprintln!("{}serve-internal: record ID {} not found.", LOG_ERROR, real_id);
                     }
                 }
             }
-            
-            // Explicitly terminate the active process layout as soon as the serving loop finishes.
-            // This prevents background process leakage and zombie runtime states under any circumstance.
             std::process::exit(0);
         }
 
-        // --- Error Handling: Unrecognized Commands ---
+        // --- Unknown Command Fallback ---
         _ => {
-            eprintln!("{}'{}' is not a recognized command.", LOG_ERROR, cmd);
-            println!("\nSee 'y1-clip --help' for a list of available commands.");
+            eprintln!("{}unrecognized command: '{}'", LOG_ERROR, cmd);
+            println!("run 'y1-clip --help' for a list of available commands.");
             std::process::exit(1);
         }
     }
