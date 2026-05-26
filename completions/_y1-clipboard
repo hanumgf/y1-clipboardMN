@@ -1,65 +1,70 @@
 #compdef y1-clipboard
 
 _y1_clipboard() {
-    local context state line
+    local context state state_descr line
     typeset -A opt_args
 
-    # 1. サブコマンドのリスト
-    local -a subcommands
-    subcommands=(
-        'daemon:Start the background monitor'
-        'list:Display history entries'
-        'search:Keyword search through history'
-        'copy-to:Restore entry to system clipboard'
-        'show:Inspect content or dump raw bytes'
-        'store:Save stdin to database'
-        'paste-from:Output clipboard to stdout'
-        'delete:Remove specific entry'
-        'wipe:Clear all history'
-        'version:Show version'
-        'help:Show help'
+    # 1. Define technical descriptions for each subcommand
+    local -a _y1_cmds
+    _y1_subcommands=(
+        'daemon:Monitor clipboard changes in background'
+        'list:Display history metadata records'
+        'search:Keyword scan across text history'
+        'copy-to:Restore a history entry to system clipboard'
+        'show:Inspect record content or dump raw bytes'
+        'store:Ingest stdin to database and sync clipboard'
+        'paste-from:Stream system clipboard directly to stdout'
+        'delete:Physically remove a specific record'
+        'wipe:Purge all history and optimize storage'
+        'version:Display version information'
+        'help:Display help information'
     )
 
-    # 2. メインの引数解析
-    # ブレース展開を使わず、1つずつ定義することでパースエラーを防止
-    _arguments -C \
-        '--verbose[Enable detailed logging]' \
-        '-v[Enable detailed logging]' \
-        '--help[Show help information]' \
-        '-h[Show help information]' \
-        '--version[Show version]' \
-        '-V[Show version]' \
+    # 2. Configure global options and the primary dispatcher
+    # Using '-s' to enable short flag stacking (e.g., -RA, -vR)
+    _arguments -s -S \
+        '(-h --help)'{-h,--help}'[Show help information]' \
+        '(-V --version)'{-V,--version}'[Show version information]' \
         '1: :->cmds' \
         '*:: :->args'
 
     case $state in
         cmds)
-            _describe -t commands 'y1-clipboard commands' subcommands
+            _describe -t commands 'y1-clipboard commands' _y1_subcommands
             ;;
         args)
-            case $line[1] in
+            case $words[1] in
+                daemon)
+                    _arguments -s -S \
+                        '(-v --verbose)'{-v,--verbose}'[Enable detailed event logging]'
+                    ;;
                 list)
-                    _arguments \
-                        '--raw[Clean output for scripting]' \
-                        '--full[Show all history]' \
-                        'all[Show all history]' \
-                        '::range (n or n-n1):'
+                    _arguments -s -S \
+                        '(-R --raw)'{-R,--raw}'[Clean output for scripting]' \
+                        '(-A --full)'{-A,--full}'[Display all history entries]' \
+                        '::range (e.g. 0-50):'
                     ;;
                 search)
-                    _arguments \
-                        '--raw[Clean output for scripting]' \
+                    _arguments -s -S \
+                        '(-R --raw)'{-R,--raw}'[Clean output for scripting]' \
                         ':query text:'
                     ;;
                 show)
-                    _arguments \
-                        '--raw[Dump exact binary data]' \
+                    _arguments -s -S \
+                        '(-R --raw)'{-R,--raw}'[Output exact binary data]' \
                         ':id:'
                     ;;
                 copy-to|delete)
                     _arguments ':id:'
                     ;;
+                wipe)
+                    _arguments -s -S \
+                        '(-f --force)'{-f,--force}'[Bypass confirmation prompt]'
+                    ;;
                 store|paste-from)
-                    _arguments ':mime:(text/plain image/png image/jpeg text/html)'
+                    local -a mimes
+                    mimes=('text/plain' 'text/plain;charset=utf-8' 'image/png' 'image/jpeg' 'text/html')
+                    _values 'mime type' $mimes[@]
                     ;;
             esac
             ;;
