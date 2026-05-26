@@ -3,25 +3,35 @@
 
 use crate::storage::ClipboardDb;
 use super::formatter;
-use super::utils::{self, RangeSelection};
+use super::utils::{self, RangeSelection, ArgContext};
 use crate::core::constants::*;
 
 /// Entry point for the 'list' command.
 pub fn run(args: &[String], db: ClipboardDb) {
-    // Strict option parsing
-    let is_raw = utils::has_flag(args, "--raw", "-R");
-    let is_full = utils::has_flag(args, "--full", "-A");
-    
-    // Positional argument for range (ignore if it starts with '-')
-    let range_candidate = args.get(2).filter(|s| !utils::is_option(s));
-    let selection = utils::parse_range(range_candidate, 25);
+    let ctx = ArgContext::parse(args);
+
+    // Error on any unrecognized flags or extra positional arguments
+    if !ctx.unknown.is_empty() {
+        for u in ctx.unknown {
+            eprintln!("{}unrecognized argument: '{}'", LOG_ERROR, u);
+        }
+        return;
+    }
+
+    // Strict positional parsing: Error if the range string is malformed
+    let selection = match utils::parse_range(ctx.positional.as_ref(), 25) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("{}argument error: {}", LOG_ERROR, e);
+            return;
+        }
+    };
     
     let all_items = db.fetch_metadata(MAX_HISTORY);
     let total_stored = db.get_total_count();
     let len = all_items.len();
     
-    // Extract target items with bounds clamping
-    let target_items: Vec<&(i64, i64, String, i64, Option<String>)> = if is_full {
+    let target_items: Vec<&(i64, i64, String, i64, Option<String>)> = if ctx.full {
         all_items.iter().collect()
     } else {
         match selection {
@@ -48,13 +58,13 @@ pub fn run(args: &[String], db: ClipboardDb) {
     };
 
     if target_items.is_empty() {
-        if !is_raw {
+        if !ctx.raw {
             println!("{}no entries found matching the criteria.", LOG_INFO);
         }
         return;
     }
 
-    render_list("Clipboard History", &target_items, total_stored, is_raw);
+    render_list("Clipboard History", &target_items, total_stored, ctx.raw);
 }
 
 /// Render items in a structured table layout.
@@ -66,14 +76,8 @@ pub fn render_list(title: &str, items: &Vec<&(i64, i64, String, i64, Option<Stri
         println!("\n--- {} ---", title);
         println!(
             "{:>wid_id$}{sep}{:>wid_when$}{sep}{:>wid_size$}{sep}{}",
-            LIST_HEADER_ID,
-            LIST_HEADER_WHEN,
-            LIST_HEADER_SIZE,
-            LIST_HEADER_CONTENT,
-            wid_id = WIDTH_ID,
-            wid_when = WIDTH_WHEN,
-            wid_size = WIDTH_SIZE,
-            sep = TABLE_SEP
+            LIST_HEADER_ID, LIST_HEADER_WHEN, LIST_HEADER_SIZE, LIST_HEADER_CONTENT,
+            wid_id = WIDTH_ID, wid_when = WIDTH_WHEN, wid_size = WIDTH_SIZE, sep = TABLE_SEP
         );
         println!("{}", TABLE_LINE_CHAR.repeat(total_width));
     }
@@ -91,23 +95,15 @@ pub fn render_list(title: &str, items: &Vec<&(i64, i64, String, i64, Option<Stri
         let formatted_preview = formatter::preview_content(&raw_preview);
 
         if is_raw {
-            // Script-friendly output
             println!(
                 "[{:>wid_id$}] {} {}",
-                i,
-                label,
-                formatted_preview,
-                wid_id = WIDTH_ID / 2
+                i, label, formatted_preview,
+                wid_id = WIDTH_ID - 2
             );
         } else {
-            // Human-readable table output
             println!(
                 "[{:>wid_id$}]{sep}{:>wid_when$}{sep}{:>wid_size$} B{sep}{} {}",
-                i,
-                formatter::format_time(*ts as u64),
-                size,
-                label,
-                formatted_preview,
+                i, formatter::format_time(*ts as u64), size, label, formatted_preview,
                 wid_id = WIDTH_ID - 2,
                 wid_when = WIDTH_WHEN,
                 wid_size = WIDTH_SIZE - 2,
@@ -120,10 +116,7 @@ pub fn render_list(title: &str, items: &Vec<&(i64, i64, String, i64, Option<Stri
         println!("{}", TABLE_LINE_CHAR.repeat(total_width));
         println!(
             "{}shown {} items | history: {} / {} entries", 
-            LOG_INFO,
-            items.len(),
-            total_stored,
-            MAX_HISTORY
+            LOG_INFO, items.len(), total_stored, MAX_HISTORY
         );
     }
 }
