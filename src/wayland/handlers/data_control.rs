@@ -93,118 +93,127 @@ impl Dispatch<ExtDataControlOfferV1, OfferData> for WaylandState {
 // --- ExtDataControlDeviceV1 ---
 
 impl Dispatch<ExtDataControlDeviceV1, ()> for WaylandState {
+    //fn event(state: &mut Self, _: &ExtDataControlDeviceV1, ev: ext_data_control_device_v1::Event, _: &(), conn: &Connection, _: &QueueHandle<Self>) {
+    //    let offer = match ev {
+    //        ext_data_control_device_v1::Event::Selection { id: Some(o) } => o,
+    //        _ => return, // Ignore PrimarySelection and empty selection events
+    //    };
     fn event(state: &mut Self, _: &ExtDataControlDeviceV1, ev: ext_data_control_device_v1::Event, _: &(), conn: &Connection, _: &QueueHandle<Self>) {
-        let offer = match ev {
-            ext_data_control_device_v1::Event::Selection { id: Some(o) } => o,
-            _ => return, // Ignore PrimarySelection and empty selection events
-        };
+        if let ext_data_control_device_v1::Event::Selection { id } = ev {
+            // Mark the selection event as processed to prevent polling delays
+            state.selection_received = true;
 
-        // Avoid self-ingestion when this process is the current clipboard provider
-        if state.is_provider { return; }
+            let Some(offer) = id else {
+                // Clipboard was cleared
+                return;
+            };
 
-        let mimes: Vec<String> = offer
-            .data::<OfferData>()
-            .and_then(|d| d.mimes.lock().ok())
-            .map(|g| g.clone())
-            .unwrap_or_default();
+            // Avoid self-ingestion when this process is the current clipboard provider
+            if state.is_provider { return; }
 
-        if mimes.is_empty() { return; }
+            let mimes: Vec<String> = offer
+                .data::<OfferData>()
+                .and_then(|d| d.mimes.lock().ok())
+                .map(|g| g.clone())
+                .unwrap_or_default();
 
-        // Security: Immediate drop if sensitive MIME hints are detected
-        if is_sensitive(&mimes) {
-            if state.verbose {
-                eprintln!("{}sensitive hints detected; skipping ingestion.", LOG_INFO);
-            }
-            return;
-        }
+            if mimes.is_empty() { return; }
 
-        // Optimal MIME selection based on priority
-        let priority: &[&str] = &[
-            "image/png", "image/jpeg", "image/webp", "image/gif",
-            "text/plain;charset=utf-8", "text/plain",
-        ];
-
-        let mime_to_get = priority.iter()
-            .find(|&&p| mimes.iter().any(|m| m == p || m.starts_with(&format!("{};", p))))
-            .map(|&s| s.to_string())
-            .or_else(|| mimes.iter().find(|m| m.starts_with("image/")).cloned())
-            .or_else(|| mimes.iter().find(|m| m.starts_with("text/")).cloned())
-            .or_else(|| mimes.first().cloned())
-            .unwrap_or_else(|| DEFAULT_MIME.to_string());
-
-        let is_image = mime_to_get.starts_with("image/");
-        let (read_file, write_fd) = match make_pipe(is_image) {
-            Some(p) => p,
-            None => return,
-        };
-
-        // Initiate data transfer from compositor and immediately drop write FD for EOF
-        offer.receive(mime_to_get.clone(), write_fd.as_fd());
-        drop(write_fd);
-        offer.destroy();
-        let _ = conn.flush();
-
-        if let Some(db_path) = state.db.as_ref().map(|db| db.path.clone()) {
-            // Daemon Mode: Asynchronous database persistence
-            let is_verbose = state.verbose;
-            std::thread::spawn(move || {
-                let capacity = if is_image { 2 * 1024 * 1024 } else { 4096 };
-                let mut buf = Vec::with_capacity(capacity);
-                let mut reader = read_file.take(268_435_456); // 256MB safety limit
-
-                if reader.read_to_end(&mut buf).is_err() || buf.is_empty() { return; }
-
-                let Ok(db_conn) = rusqlite::Connection::open(&db_path) else { return };
-                db_conn.busy_timeout(std::time::Duration::from_millis(SQLITE_TIMEOUT_MS)).ok();
-                db_conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;").ok();
-
-                let hash = format!("{:x}", md5::compute(&buf));
-                let ts   = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as i64;
-
-                let existing: Option<i64> = db_conn.query_row(
-                    "SELECT id FROM clipboard WHERE hash = ?1 LIMIT 1",
-                    rusqlite::params![hash],
-                    |row| row.get(0),
-                ).ok();
-
-                if let Some(id) = existing {
-                    let _ = db_conn.execute("UPDATE clipboard SET timestamp = ?1 WHERE id = ?2", rusqlite::params![ts, id]);
-                    return;
+            // Security: Immediate drop if sensitive MIME hints are detected
+            if is_sensitive(&mimes) {
+                if state.verbose {
+                    eprintln!("{}sensitive hints detected; skipping ingestion.", LOG_INFO);
                 }
+                return;
+            }
 
-                let preview = if mime_to_get.contains("text") {
-                    let s = String::from_utf8_lossy(&buf);
-                    Some(s.chars().take(PREVIEW_CHARS).collect::<String>().replace('\n', " "))
-                } else {
-                    None
-                };
+            // Optimal MIME selection based on priority
+            let priority: &[&str] = &[
+                "image/png", "image/jpeg", "image/webp", "image/gif",
+                "text/plain;charset=utf-8", "text/plain",
+            ];
 
-                let res = db_conn.execute(
-                    "INSERT INTO clipboard (timestamp, mime, size, preview, content, hash) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                    rusqlite::params![ts, mime_to_get.clone(), buf.len() as i64, preview, buf, hash],
-                );
+            let mime_to_get = priority.iter()
+                .find(|&&p| mimes.iter().any(|m| m == p || m.starts_with(&format!("{};", p))))
+                .map(|&s| s.to_string())
+                .or_else(|| mimes.iter().find(|m| m.starts_with("image/")).cloned())
+                .or_else(|| mimes.iter().find(|m| m.starts_with("text/")).cloned())
+                .or_else(|| mimes.first().cloned())
+                .unwrap_or_else(|| DEFAULT_MIME.to_string());
 
-                if res.is_ok() && is_verbose {
-                    println!("{}", log_save(&mime_to_get, buf.len()));
+            let is_image = mime_to_get.starts_with("image/");
+            let (read_file, write_fd) = match make_pipe(is_image) {
+                Some(p) => p,
+                None => return,
+            };
+
+            // Initiate data transfer from compositor and immediately drop write FD for EOF
+            offer.receive(mime_to_get.clone(), write_fd.as_fd());
+            drop(write_fd);
+            offer.destroy();
+            let _ = conn.flush();
+
+            if let Some(db_path) = state.db.as_ref().map(|db| db.path.clone()) {
+                // Daemon Mode: Asynchronous database persistence
+                let is_verbose = state.verbose;
+                std::thread::spawn(move || {
+                    let capacity = if is_image { 2 * 1024 * 1024 } else { 4096 };
+                    let mut buf = Vec::with_capacity(capacity);
+                    let mut reader = read_file.take(268_435_456); // 256MB safety limit
+
+                    if reader.read_to_end(&mut buf).is_err() || buf.is_empty() { return; }
+
+                    let Ok(db_conn) = rusqlite::Connection::open(&db_path) else { return };
+                    db_conn.busy_timeout(std::time::Duration::from_millis(SQLITE_TIMEOUT_MS)).ok();
+                    db_conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;").ok();
+
+                    let hash = format!("{:x}", md5::compute(&buf));
+                    let ts   = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as i64;
+
+                    let existing: Option<i64> = db_conn.query_row(
+                        "SELECT id FROM clipboard WHERE hash = ?1 LIMIT 1",
+                        rusqlite::params![hash],
+                        |row| row.get(0),
+                    ).ok();
+
+                    if let Some(id) = existing {
+                        let _ = db_conn.execute("UPDATE clipboard SET timestamp = ?1 WHERE id = ?2", rusqlite::params![ts, id]);
+                        return;
+                    }
+
+                    let preview = if mime_to_get.contains("text") {
+                        let s = String::from_utf8_lossy(&buf);
+                        Some(s.chars().take(PREVIEW_CHARS).collect::<String>().replace('\n', " "))
+                    } else {
+                        None
+                    };
+
+                    let res = db_conn.execute(
+                        "INSERT INTO clipboard (timestamp, mime, size, preview, content, hash) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                        rusqlite::params![ts, mime_to_get.clone(), buf.len() as i64, preview, buf, hash],
+                    );
+
+                    if res.is_ok() && is_verbose {
+                        println!("{}", log_save(&mime_to_get, buf.len()));
+                    }
+
+                    let _ = db_conn.execute("DELETE FROM clipboard WHERE id NOT IN (SELECT id FROM clipboard ORDER BY timestamp DESC LIMIT 256)", []);
+                });
+            } else {
+                // Action Mode: Synchronous ingestion for immediate CLI output
+                let mut buf = Vec::new();
+                let mut reader = read_file.take(268_435_456);
+                if reader.read_to_end(&mut buf).is_ok() {
+                    state.rx_buf = buf;
                 }
-
-                let _ = db_conn.execute("DELETE FROM clipboard WHERE id NOT IN (SELECT id FROM clipboard ORDER BY timestamp DESC LIMIT 256)", []);
-            });
-        } else {
-            // Action Mode: Synchronous ingestion for immediate CLI output
-            let mut buf = Vec::new();
-            let mut reader = read_file.take(268_435_456);
-            if reader.read_to_end(&mut buf).is_ok() {
-                state.rx_buf = buf;
             }
         }
+        wayland_client::event_created_child!(WaylandState, ExtDataControlDeviceV1, [
+            ext_data_control_device_v1::EVT_DATA_OFFER_OPCODE => (ExtDataControlOfferV1, OfferData {
+                mimes: Arc::new(Mutex::new(Vec::new()))
+            })
+        ]);
     }
-
-    wayland_client::event_created_child!(WaylandState, ExtDataControlDeviceV1, [
-        ext_data_control_device_v1::EVT_DATA_OFFER_OPCODE => (ExtDataControlOfferV1, OfferData {
-            mimes: Arc::new(Mutex::new(Vec::new()))
-        })
-    ]);
 }
 
 // --- ExtDataControlSourceV1 ---
