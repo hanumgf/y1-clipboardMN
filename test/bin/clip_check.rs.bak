@@ -1,0 +1,145 @@
+use std::fs::File;
+use std::io::Read;
+use std::os::fd::{AsFd, FromRawFd, OwnedFd};
+use wayland_client::{
+    protocol::{wl_registry, wl_seat},
+    Connection, Dispatch, QueueHandle,
+};
+use wayland_protocols::ext::data_control::v1::client::{
+    ext_data_control_device_v1::{self, ExtDataControlDeviceV1},
+    ext_data_control_manager_v1::{self, ExtDataControlManagerV1},
+    ext_data_control_offer_v1::{self, ExtDataControlOfferV1},
+};
+
+struct SimpleState {
+    manager: Option<ExtDataControlManagerV1>,
+    seat: Option<wl_seat::WlSeat>,
+    device: Option<ExtDataControlDeviceV1>,
+}
+
+impl Dispatch<wl_registry::WlRegistry, ()> for SimpleState {
+    fn event(
+        state: &mut Self,
+        registry: &wl_registry::WlRegistry,
+        event: wl_registry::Event,
+        _data: &(),
+        _conn: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        if let wl_registry::Event::Global { name, interface, version } = event {
+            match interface.as_str() {
+                "ext_data_control_manager_v1" => {
+                    println!("-> [Bind] Activating DataControlManager. ID: {name}");
+                    state.manager = Some(registry.bind::<ExtDataControlManagerV1, _, _>(name, version.min(1), qh, ()));
+                }
+                "wl_seat" if state.seat.is_none() => {
+                    state.seat = Some(registry.bind::<wl_seat::WlSeat, _, _>(name, version, qh, ()));
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+impl Dispatch<ExtDataControlManagerV1, ()> for SimpleState {
+    fn event(_: &mut Self, _: &ExtDataControlManagerV1, _: ext_data_control_manager_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+}
+
+impl Dispatch<ExtDataControlDeviceV1, ()> for SimpleState {
+    fn event(
+        _state: &mut Self,
+        _device: &ExtDataControlDeviceV1,
+        event: ext_data_control_device_v1::Event,
+        _data: &(),
+        conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        match event {
+            ext_data_control_device_v1::Event::Selection { id: Some(offer) } => {
+                println!("🎉 [Detected] Clipboard payload active!");
+                println!("=== Allocating standard stream infrastructure ===");
+                
+                let Ok((read_pipe, write_pipe)) = os_pipe::pipe() else {
+                    eprintln!("Critical: Failed to initialize pipeline primitives.");
+                    return;
+                };
+
+                let read_fd = OwnedFd::from(read_pipe);
+                let write_fd = OwnedFd::from(write_pipe);
+
+                offer.receive("text/plain;charset=utf-8".to_string(), write_fd.as_fd());
+                drop(write_fd); // 送信口を閉じてEOFフラグを確定
+                let _ = conn.flush();
+
+                println!("=== Ingesting runtime bytes from system boundary ===");
+                let mut buf = Vec::with_capacity(4096);
+                let mut reader = File::from(read_fd);
+                
+                if reader.read_to_end(&mut buf).is_ok() {
+                    println!("🎉 Ingestion complete. Footprint: {} bytes", buf.len());
+                    match String::from_utf8(buf) {
+                        Ok(text) => println!("--- [Content] ---\n{}\n--------------", text.trim()),
+                        Err(_) => println!("(Payload matching binary array layout; skipped text decoding)"),
+                    }
+                } else {
+                    println!("❌ Stream communication aborted unexpectedly.");
+                }
+            }
+            ext_data_control_device_v1::Event::Selection { id: None } => {
+                println!("❌ [Notice] Target selection envelope is currently empty.");
+            }
+            _ => {}
+        }
+    }
+
+    wayland_client::event_created_child!(
+        SimpleState,
+        ExtDataControlDeviceV1,
+        [
+            ext_data_control_device_v1::EVT_DATA_OFFER_OPCODE => (ExtDataControlOfferV1, ())
+        ]
+    );
+}
+
+impl Dispatch<ExtDataControlOfferV1, ()> for SimpleState {
+    fn event(
+        _state: &mut Self,
+        _offer: &ExtDataControlOfferV1,
+        event: ext_data_control_offer_v1::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        if let ext_data_control_offer_v1::Event::Offer { mime_type } = event {
+            println!("   ➔ [MIME Advertisement] {mime_type}");
+        }
+    }
+}
+
+impl Dispatch<wl_seat::WlSeat, ()> for SimpleState {
+    fn event(_: &mut Self, _: &wl_seat::WlSeat, _: wl_seat::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+}
+
+fn main() {
+    let conn = Connection::connect_to_env().expect("Compositor connection dropped dropout");
+    let mut event_queue = conn.new_event_queue();
+    let qh = event_queue.handle();
+
+    conn.display().get_registry(&qh, ());
+
+    let mut state = SimpleState { manager: None, seat: None, device: None };
+
+    event_queue.roundtrip(&mut state).unwrap();
+
+    let (Some(manager), Some(seat)) = (&state.manager, &state.seat) else {
+        println!("Missing core interface layout profiles inside current environment.");
+        return;
+    };
+
+    state.device = Some(manager.get_data_device(seat, &qh, ()));
+    println!("=== Syncing clip envelopes ===");
+    
+    event_queue.roundtrip(&mut state).unwrap();
+    
+    println!("=== Execution scope completed ===");
+}
