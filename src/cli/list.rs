@@ -10,16 +10,20 @@ use crate::core::constants::*;
 pub fn run(args: &[String], db: ClipboardDb) {
     let ctx = ArgContext::parse(args);
 
-    // Error on any unrecognized flags or extra positional arguments
-    if !ctx.unknown.is_empty() {
-        for u in ctx.unknown {
-            eprintln!("{}unrecognized argument: '{}'", LOG_ERROR, u);
-        }
+    // Strict validation: check for unknown flags
+    if !ctx.unknown_flags.is_empty() {
+        eprintln!("{}unknown option detected: '{}'", LOG_ERROR, ctx.unknown_flags[0]);
         return;
     }
 
-    // Strict positional parsing: Error if the range string is malformed
-    let selection = match utils::parse_range(ctx.positional.as_ref(), 25) {
+    // Arity enforcement: list accepts at most one positional argument (the range)
+    if ctx.positionals.len() > 1 {
+        eprintln!("{}command 'list' accepts only one range argument.", LOG_ERROR);
+        return;
+    }
+
+    // Parse the positional range argument strictly
+    let selection = match utils::parse_range(ctx.positionals.first(), 25) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("{}argument error: {}", LOG_ERROR, e);
@@ -31,6 +35,7 @@ pub fn run(args: &[String], db: ClipboardDb) {
     let total_stored = db.get_total_count();
     let len = all_items.len();
     
+    // Determine target items based on flags and range selection
     let target_items: Vec<&(i64, i64, String, i64, Option<String>)> = if ctx.full {
         all_items.iter().collect()
     } else {
@@ -64,10 +69,11 @@ pub fn run(args: &[String], db: ClipboardDb) {
         return;
     }
 
+    // Execute rendering with the preferred visual balance
     render_list("Clipboard History", &target_items, total_stored, ctx.raw);
 }
 
-/// Render items in a structured table layout.
+/// Render metadata items in a structured table layout.
 pub fn render_list(title: &str, items: &Vec<&(i64, i64, String, i64, Option<String>)>, total_stored: usize, is_raw: bool) {
     let label_width = 6; 
     let total_width = WIDTH_ID + WIDTH_WHEN + WIDTH_SIZE + PREVIEW_WIDTH + label_width + (TABLE_SEP.len() * 3);
@@ -76,8 +82,14 @@ pub fn render_list(title: &str, items: &Vec<&(i64, i64, String, i64, Option<Stri
         println!("\n--- {} ---", title);
         println!(
             "{:>wid_id$}{sep}{:>wid_when$}{sep}{:>wid_size$}{sep}{}",
-            LIST_HEADER_ID, LIST_HEADER_WHEN, LIST_HEADER_SIZE, LIST_HEADER_CONTENT,
-            wid_id = WIDTH_ID, wid_when = WIDTH_WHEN, wid_size = WIDTH_SIZE, sep = TABLE_SEP
+            LIST_HEADER_ID,
+            LIST_HEADER_WHEN,
+            LIST_HEADER_SIZE,
+            LIST_HEADER_CONTENT,
+            wid_id = WIDTH_ID,
+            wid_when = WIDTH_WHEN,
+            wid_size = WIDTH_SIZE,
+            sep = TABLE_SEP
         );
         println!("{}", TABLE_LINE_CHAR.repeat(total_width));
     }

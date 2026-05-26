@@ -3,22 +3,34 @@
 
 use crate::storage::ClipboardDb;
 use crate::core::constants::*;
-use crate::cli::utils;
+use crate::cli::utils::ArgContext;
 use super::list;
 
-/// Search for keyword matches within history and display filtered results.
+/// Search through metadata history and render results using strict argument validation.
 pub fn run(args: &[String], db: ClipboardDb) {
-    // Strictly isolate the search query from optional flags
-    let query = match args.get(2).filter(|s| !utils::is_option(s)) {
-        Some(q) if !q.trim().is_empty() => q.trim(),
-        _ => {
-            eprintln!("{}missing search keyword.", LOG_ERROR);
-            println!("usage: y1-clip search <keyword> [--raw | -R]");
-            return;
-        }
-    };
+    let ctx = ArgContext::parse(args);
 
-    // Execute metadata-level scan using SQLite indexing
+    // Strict validation: 'search' only supports --raw/-R and --verbose/-v
+    if !ctx.unknown_flags.is_empty() || ctx.full || ctx.force {
+        eprintln!("{}command 'search' does not support specified options.", LOG_ERROR);
+        return;
+    }
+
+    // Arity enforcement: exactly one positional argument (keyword) required
+    if ctx.positionals.is_empty() {
+        eprintln!("{}missing required search keyword.", LOG_ERROR);
+        println!("usage: y1-clip search <keyword> [--raw | -R]");
+        return;
+    }
+
+    if ctx.positionals.len() > 1 {
+        eprintln!("{}command 'search' accepts only one keyword.", LOG_ERROR);
+        return;
+    }
+
+    let query = &ctx.positionals[0];
+
+    // Execute metadata-level search via indexed SQLite query
     let results = db.search_metadata(query, MAX_HISTORY);
     let total_stored = db.get_total_count();
 
@@ -27,13 +39,9 @@ pub fn run(args: &[String], db: ClipboardDb) {
         return;
     }
 
-    // Check for script-mode flag
-    let is_raw = utils::has_flag(args, "--raw", "-R");
-
-    // Collect references to match render_list signature requirements
+    // Prepare references and delegate rendering to the unified list module
     let refs: Vec<_> = results.iter().collect();
     let title = format!("search: '{}' ({} hits)", query, results.len());
     
-    // Delegate to unified list renderer
-    list::render_list(&title, &refs, total_stored, is_raw);
+    list::render_list(&title, &refs, total_stored, ctx.raw);
 }
