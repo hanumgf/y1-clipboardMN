@@ -2,67 +2,73 @@
 // src/cli/cleaning.rs
 
 use crate::storage::ClipboardDb;
+use crate::core::constants::*;
+use crate::cli::utils;
 use std::io::{self, Write};
 
-/// Delete the history entry with the specified ID.
+/// Remove a specific history entry by its display index.
 pub fn delete_run(args: &[String], db: ClipboardDb) {
-    // Validate argument presence
-    let id_str = match args.get(2) {
-        Some(s) => s,
+    // Isolate positional index argument from flags
+    let id_arg = args.get(2).filter(|s| !utils::is_option(s));
+
+    let idx = match id_arg {
+        Some(s) => match s.parse::<usize>() {
+            Ok(i) => i,
+            Err(_) => {
+                eprintln!("{}'{}' is not a valid numerical index.", LOG_ERROR, s);
+                return;
+            }
+        },
         None => {
-            eprintln!("error: no ID provided.");
+            eprintln!("{}missing required entry index.", LOG_ERROR);
             println!("usage: y1-clip delete <id>");
             return;
         }
     };
 
-    // Parse the ID string to usize
-    let idx = match id_str.parse::<usize>() {
-        Ok(i) => i,
-        Err(_) => {
-            eprintln!("error: '{}' is not a valid numerical ID.", id_str);
-            return;
-        }
-    };
-
-    // Perform database deletion
+    // Execute physical deletion from persistent storage
     match db.delete_by_index(idx) {
         Ok(true) => {
-            println!("info: successfully deleted entry at ID [{}]", idx);
+            println!("{}successfully removed entry at index [{}].", LOG_INFO, idx);
         }
         Ok(false) => {
-            eprintln!("error: entry with ID [{}] not found.", idx);
+            eprintln!("{}index [{}] is outside current history scope.", LOG_ERROR, idx);
         }
         Err(e) => {
-            eprintln!("error: database failure: {}", e);
+            eprintln!("{}database operation failure: {}", LOG_ERROR, e);
         }
     }
 }
 
-/// Wipe all history and optimize the database storage.
-pub fn wipe_run(db: ClipboardDb) {
-    // Prompt for user confirmation
-    print!("Proceed to clear all history and optimize storage? [y/N]: ");
-    let _ = io::stdout().flush();
+/// Purge all history entries and perform database vacuuming.
+pub fn wipe_run(db: ClipboardDb, args: &[String]) {
+    // Check for force flag to bypass interactive confirmation
+    let force = utils::has_flag(args, "--force", "-f");
 
-    let mut input = String::new();
-    if io::stdin().read_line(&mut input).is_err() {
-        eprintln!("error: failed to read user input.");
-        return;
+    if !force {
+        print!("purge all history and optimize storage? [y/N]: ");
+        let _ = io::stdout().flush();
+
+        let mut input = String::new();
+        if io::stdin().read_line(&mut input).is_err() {
+            eprintln!("{}failed to read interactive input.", LOG_ERROR);
+            return;
+        }
+
+        let response = input.trim().to_lowercase();
+        if response != "y" && response != "yes" {
+            println!("{}operation aborted by user.", LOG_INFO);
+            return;
+        }
     }
 
-    // Check for positive confirmation (y or yes)
-    let response = input.trim().to_lowercase();
-    if response == "y" || response == "yes" {
-        match db.wipe() {
-            Ok(_) => {
-                println!("info: all history has been wiped and database optimized.");
-            }
-            Err(e) => {
-                eprintln!("error: failed to wipe database: {}", e);
-            }
+    // Execute full database reset and structural optimization
+    match db.wipe() {
+        Ok(_) => {
+            println!("{}history purged and database optimized.", LOG_INFO);
         }
-    } else {
-        println!("info: operation canceled.");
+        Err(e) => {
+            eprintln!("{}wipe operation failure: {}", LOG_ERROR, e);
+        }
     }
 }

@@ -3,53 +3,50 @@
 
 use crate::storage::ClipboardDb;
 use crate::core::constants::*;
+use crate::cli::utils;
 use std::process::{Command, Stdio};
 use std::env;
 
-/// Restore an item with the specified ID from history to the OS clipboard.
+/// Re-broadcast a history entry to the system clipboard and promote it to the top.
 pub fn run(args: &[String], db: ClipboardDb, verbose: bool) {
-    // 1. Extract index from arguments
-    let id_str = match args.get(2) {
-        Some(s) => s,
+    // Extract display index from positional arguments; ignore flags
+    let id_arg = args.get(2).filter(|s| !utils::is_option(s));
+
+    let idx = match id_arg {
+        Some(s) => match s.parse::<usize>() {
+            Ok(i) => i,
+            Err(_) => {
+                eprintln!("{}'{}' is not a valid numerical index.", LOG_ERROR, s);
+                return;
+            }
+        },
         None => {
-            eprintln!("{}no ID provided.", LOG_ERROR);
+            eprintln!("{}missing required history entry index.", LOG_ERROR);
             println!("usage: y1-clip copy-to <id>");
             return;
         }
     };
 
-    let idx = match id_str.parse::<usize>() {
-        Ok(i) => i,
-        Err(_) => {
-            eprintln!("{}'{}' is not a valid numerical ID.", LOG_ERROR, id_str);
-            return;
-        }
-    };
-
-    // 2. Identify the real ID from metadata
+    // Resolve database identifier from the specified display index
     let meta = db.fetch_metadata(MAX_HISTORY);
-    let item = match meta.get(idx) {
-        Some(it) => it,
+    let real_id = match meta.get(idx) {
+        Some(&(id, _, _, _, _)) => id,
         None => {
-            eprintln!("{}entry with ID [{}] not found.", LOG_ERROR, idx);
+            eprintln!("{}index [{}] is outside current history bounds.", LOG_ERROR, idx);
             return;
         }
     };
 
-    let real_id = item.0; // id
-    let _mime = &item.2;  // mime (retained for debugging purposes)
-
-    // 3. Update the database timestamp (moves the item to the top of the history stack)
+    // Update entry timestamp to implement 'move to top' logic (MRU)
     if let Err(e) = db.update_timestamp(real_id) {
-        eprintln!("{}failed to update record timestamp: {}", LOG_ERROR, e);
+        eprintln!("{}storage timestamp update failure: {}", LOG_ERROR, e);
         return;
     }
 
-    // 4. Restart itself as a background process (serve-internal mode)
-    // Redirect stdout/stderr to null to ensure immunity from parent process termination.
+    // Spawn a decoupled background worker to manage the Wayland selection
     match env::current_exe() {
         Ok(exe) => {
-            let res = Command::new(exe)
+            let status = Command::new(exe)
                 .arg("serve-internal")
                 .arg(real_id.to_string())
                 .arg(verbose.to_string())
@@ -58,19 +55,19 @@ pub fn run(args: &[String], db: ClipboardDb, verbose: bool) {
                 .stderr(Stdio::null())
                 .spawn();
 
-            match res {
+            match status {
                 Ok(_) => {
                     if verbose {
                         println!("{}", log_restore(idx));
                     }
                 }
                 Err(e) => {
-                    eprintln!("{}failed to spawn background server: {}", LOG_ERROR, e);
+                    eprintln!("{}background server spawn failure: {}", LOG_ERROR, e);
                 }
             }
         }
         Err(e) => {
-            eprintln!("{}could not determine current executable path: {}", LOG_ERROR, e);
+            eprintln!("{}executable path resolution error: {}", LOG_ERROR, e);
         }
     }
 }
