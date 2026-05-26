@@ -38,7 +38,7 @@ pub fn paste_from_os(mime: &str) -> Vec<u8> {
     // 2. Data acquisition loop
     // Robustness: Continue dispatching until rx_buf is populated or retries exhausted.
     let mut retry_count = 0;
-    while state.rx_buf.is_empty() && retry_count < WAYLAND_SYNC_RETRIES {
+    while !state.selection_received && retry_count < WAYLAND_SYNC_RETRIES {
         if event_queue.blocking_dispatch(&mut state).is_err() {
             break;
         }

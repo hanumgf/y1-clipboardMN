@@ -25,6 +25,7 @@ pub struct WaylandState {
     pub rx_buf: Vec<u8>,
     pub last_data: Vec<u8>,
     pub is_provider: bool,
+    pub selection_received: bool,
 }
 
 impl WaylandState {
@@ -39,6 +40,7 @@ impl WaylandState {
             rx_buf: Vec::new(),
             last_data: Vec::new(),
             is_provider: false,
+            selection_received: false,
         }
     }
 
@@ -53,6 +55,7 @@ impl WaylandState {
             rx_buf: Vec::new(),
             last_data: Vec::new(),
             is_provider: false,
+            selection_received: false,
         }
     }
 }
