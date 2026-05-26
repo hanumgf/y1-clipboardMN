@@ -108,7 +108,7 @@ impl ClipboardDb {
         let mut stmt = match self.conn.prepare(
             "SELECT id, timestamp, mime, size, preview FROM clipboard 
              WHERE (mime LIKE '%text%' OR mime LIKE '%UTF8%') 
-             AND (preview LIKE ?1 OR CAST(content AS TEXT) LIKE ?1)
+             AND (preview LIKE ?1 OR (preview IS NULL AND CAST(content AS TEXT) LIKE ?1))
              ORDER BY timestamp DESC LIMIT ?2"
         ) {
             Ok(s) => s,
@@ -159,12 +159,20 @@ impl ClipboardDb {
         Ok(())
     }
 
-    pub fn delete_by_index(&self, idx: usize) -> Result<bool> {
+    // pub fn delete_by_index(&self, idx: usize) -> Result<bool> {
+    //     let res = self.conn.execute(
+    //         "DELETE FROM clipboard WHERE id = (
+    //             SELECT id FROM clipboard ORDER BY timestamp DESC LIMIT 1 OFFSET ?1
+    //         )",
+    //         params![idx as i64],
+    //     )?;
+    //     Ok(res > 0)
+    // }
+
+    pub fn delete_by_id(&self, id: i64) -> Result<bool> {
         let res = self.conn.execute(
-            "DELETE FROM clipboard WHERE id = (
-                SELECT id FROM clipboard ORDER BY timestamp DESC LIMIT 1 OFFSET ?1
-            )",
-            params![idx as i64],
+            "DELETE FROM clipboard WHERE id = ?1",
+            params![id],
         )?;
         Ok(res > 0)
     }
