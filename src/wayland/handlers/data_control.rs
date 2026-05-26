@@ -154,7 +154,7 @@ impl Dispatch<ExtDataControlDeviceV1, ()> for WaylandState {
 
                 if reader.read_to_end(&mut buf).is_err() || buf.is_empty() { return; }
 
-                let Ok(mut db_conn) = rusqlite::Connection::open(&db_path) else { return };
+                let Ok(db_conn) = rusqlite::Connection::open(&db_path) else { return };
                 db_conn.busy_timeout(std::time::Duration::from_millis(SQLITE_TIMEOUT_MS)).ok();
                 db_conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;").ok();
 
