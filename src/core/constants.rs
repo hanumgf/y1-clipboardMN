@@ -27,6 +27,8 @@ pub const TEXT_MIME_ALTS: &[&str] = &[
     "TEXT",
 ];
 
+pub const MIME_URI_LIST: &str = "text/uri-list";
+
 // --- UI Layout & Formatting Settings ---
 pub const WIDTH_ID: usize      = 6;
 pub const WIDTH_WHEN: usize    = 8;
@@ -40,6 +42,7 @@ pub const TABLE_LINE_CHAR: &str = "-";
 pub const LABEL_IMAGE: &str = "[IMG]";
 pub const LABEL_TEXT:  &str = "[TXT]";
 pub const LABEL_DATA:  &str = "[BIN]";
+pub const LABEL_FILE:  &str = "[FIL]";
 
 pub const LIST_HEADER_ID: &str      = "ID";
 pub const LIST_HEADER_WHEN: &str    = "WHEN";

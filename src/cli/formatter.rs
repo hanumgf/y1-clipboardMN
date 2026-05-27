@@ -55,7 +55,9 @@ pub fn preview_content(text: &str) -> String {
 
 /// Retrieve the appropriate label corresponding to the given MIME type.
 pub fn get_label(mime: &str) -> &'static str {
-    if mime.starts_with("image/") {
+    if mime == MIME_URI_LIST {
+        LABEL_FILE
+    } else if mime.starts_with("image/") {
         LABEL_IMAGE
     } else if mime.contains("text") || mime.contains("UTF8") {
         LABEL_TEXT
@@ -63,3 +65,4 @@ pub fn get_label(mime: &str) -> &'static str {
         LABEL_DATA
     }
 }
+

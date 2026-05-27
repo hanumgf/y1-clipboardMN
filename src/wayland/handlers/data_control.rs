@@ -102,22 +102,20 @@ impl Dispatch<ExtDataControlDeviceV1, ()> for WaylandState {
             if mimes.is_empty() { return; }
 
             if is_sensitive(&mimes) {
-                if state.verbose {
-                    eprintln!("{}sensitive hints detected; skipping ingestion.", LOG_INFO);
-                }
+                if state.verbose { eprintln!("{}sensitive hints detected; skipping ingestion.", LOG_INFO); }
                 return;
             }
 
+            // High-priority formats including File Manager URIs
             let priority: &[&str] = &[
-                "image/png", "image/jpeg", "image/webp", "image/gif",
-                "text/plain;charset=utf-8", "text/plain",
+                "image/webp", "image/png", "image/jpeg", "image/gif",
+                MIME_URI_LIST, "text/plain;charset=utf-8", "text/plain",
             ];
 
             let mime_to_get = priority.iter()
-                .find(|&&p| mimes.iter().any(|m| m == p || m.starts_with(&format!("{};", p))))
-                .map(|&s| s.to_string())
+                .find_map(|&p| mimes.iter().find(|&m| m == p || m.starts_with(&format!("{};", p))))
+                .cloned()
                 .or_else(|| mimes.iter().find(|m| m.starts_with("image/")).cloned())
-                .or_else(|| mimes.iter().find(|m| m.starts_with("text/")).cloned())
                 .or_else(|| mimes.first().cloned())
                 .unwrap_or_else(|| DEFAULT_MIME.to_string());
 
@@ -135,38 +133,66 @@ impl Dispatch<ExtDataControlDeviceV1, ()> for WaylandState {
             if let Some(db_path) = state.db.as_ref().map(|db| db.path.clone()) {
                 let is_verbose = state.verbose;
 
-                // Daemon Mode: Optimized asynchronous ingestion
                 std::thread::spawn(move || {
-                    // Pre-allocate context for streaming hash calculation
                     let mut hash_context = md5::Context::new();
-                    
-                    // Optimization: Page-aligned buffer size (64KB) for efficient syscalls
                     let mut chunk = vec![0u8; 65536];
-                    let mut payload = Vec::with_capacity(1048576); // Start with 1MB to reduce early re-allocs
-                    let mut reader = read_file.take(268435456); // 256MB safety limit
+                    let mut payload = Vec::with_capacity(1048576);
+                    let mut reader = read_file.take(268435456); 
 
-                    // Streaming Read & Hash: Single-pass scan
-                    loop {
-                        match reader.read(&mut chunk) {
-                            Ok(0) => break,
-                            Ok(n) => {
-                                hash_context.consume(&chunk[..n]);
-                                payload.extend_from_slice(&chunk[..n]);
-                            }
-                            Err(_) => return,
-                        }
+                    while let Ok(n) = reader.read(&mut chunk) {
+                        if n == 0 { break; }
+                        hash_context.consume(&chunk[..n]);
+                        payload.extend_from_slice(&chunk[..n]);
                     }
 
                     if payload.is_empty() { return; }
 
-                    if let Ok(db_conn) = rusqlite::Connection::open(&db_path) {
+                    let mut final_mime = mime_to_get;
+
+                    // 🚀 File Promotion Logic: URI to Binary
+                    if final_mime == MIME_URI_LIST {
+                        let uri_content = String::from_utf8_lossy(&payload);
+                        if let Some(line) = uri_content.lines().next() {
+                            if line.starts_with("file://") {
+                                // Robust decoding for percent-encoded local paths
+                                let path_raw = line.trim_start_matches("file://");
+                                if let Ok(decoded_path) = percent_encoding::percent_decode_str(path_raw).decode_utf8() {
+                                    let path = std::path::Path::new(decoded_path.as_ref());
+                                    
+                                    if path.exists() && path.is_file() {
+                                        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                                        let file_mime = match ext.to_lowercase().as_str() {
+                                            "png" => Some("image/png"),
+                                            "jpg" | "jpeg" => Some("image/jpeg"),
+                                            "webp" => Some("image/webp"),
+                                            "gif" => Some("image/gif"),
+                                            _ => None,
+                                        };
+
+                                        if let Some(m) = file_mime {
+                                            // Promotion: Ingest actual file data from disk
+                                            if let Ok(file_data) = std::fs::read(path) {
+                                                payload = file_data;
+                                                final_mime = m.to_string();
+                                                let mut new_hash = md5::Context::new();
+                                                new_hash.consume(&payload);
+                                                hash_context = new_hash;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Database persistence with MRU logic
+                    if let Ok(mut db_conn) = rusqlite::Connection::open(&db_path) {
                         db_conn.busy_timeout(std::time::Duration::from_millis(SQLITE_TIMEOUT_MS)).ok();
                         db_conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;").ok();
 
                         let hash = format!("{:x}", hash_context.finalize());
-                        let ts   = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as i64;
+                        let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as i64;
 
-                        // Deduplication check using the pre-computed hash
                         let existing: Option<i64> = db_conn.query_row(
                             "SELECT id FROM clipboard WHERE hash = ?1 LIMIT 1",
                             rusqlite::params![hash], |row| row.get(0),
@@ -177,26 +203,26 @@ impl Dispatch<ExtDataControlDeviceV1, ()> for WaylandState {
                             return;
                         }
 
-                        let preview = if mime_to_get.contains("text") {
+                        let preview = if final_mime.contains("text") || final_mime == MIME_URI_LIST {
                             let s = String::from_utf8_lossy(&payload);
                             Some(s.chars().take(PREVIEW_CHARS).collect::<String>().replace('\n', " "))
                         } else { None };
 
                         let res = db_conn.execute(
                             "INSERT INTO clipboard (timestamp, mime, size, preview, content, hash) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                            rusqlite::params![ts, mime_to_get, payload.len() as i64, preview, payload, hash],
+                            rusqlite::params![ts, final_mime, payload.len() as i64, preview, payload, hash],
                         );
 
                         if res.is_ok() && is_verbose {
-                            println!("{}", log_save(&mime_to_get, payload.len()));
+                            println!("{}", log_save(&final_mime, payload.len()));
                         }
                         let _ = db_conn.execute("DELETE FROM clipboard WHERE id NOT IN (SELECT id FROM clipboard ORDER BY timestamp DESC LIMIT 256)", []);
                     }
                 });
-
             } else {
+                // Action Mode: Direct buffer population
                 let mut buf = Vec::new();
-                let mut reader = read_file.take(268_435_456);
+                let mut reader = read_file.take(268435456);
                 if reader.read_to_end(&mut buf).is_ok() {
                     state.rx_buf = buf;
                 }
