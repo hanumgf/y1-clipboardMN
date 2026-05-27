@@ -10,11 +10,12 @@ use wayland_protocols::ext::data_control::v1::client::{
 use std::sync::{Arc, Mutex};
 
 /// Container for MIME types offered by a specific selection.
-/// Using Arc<Mutex<>> to ensure thread-safety during async data ingestion.
+/// Used to maintain isolation between concurrent data offers.
 pub struct OfferData {
     pub mimes: Arc<Mutex<Vec<String>>>,
 }
 
+/// Core state architecture for Wayland protocol interaction.
 pub struct WaylandState {
     pub manager: Option<ExtDataControlManagerV1>,
     pub seat: Option<WlSeat>,

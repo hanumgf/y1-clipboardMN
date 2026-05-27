@@ -101,23 +101,39 @@ impl Dispatch<ExtDataControlDeviceV1, ()> for WaylandState {
 
             if mimes.is_empty() { return; }
 
-            if is_sensitive(&mimes) {
-                if state.verbose { eprintln!("{}sensitive hints detected; skipping ingestion.", LOG_INFO); }
-                return;
-            }
-
-            // High-priority formats including File Manager URIs
+            // Logic: Dynamic MIME selection prioritizing modern formats
             let priority: &[&str] = &[
-                "image/webp", "image/png", "image/jpeg", "image/gif",
-                MIME_URI_LIST, "text/plain;charset=utf-8", "text/plain",
+                "image/webp",
+                "image/png",
+                "image/jpeg",
+                "image/gif",
+                MIME_URI_LIST,
+                "text/plain;charset=utf-8",
+                "text/plain",
             ];
 
             let mime_to_get = priority.iter()
-                .find_map(|&p| mimes.iter().find(|&m| m == p || m.starts_with(&format!("{};", p))))
-                .cloned()
-                .or_else(|| mimes.iter().find(|m| m.starts_with("image/")).cloned())
-                .or_else(|| mimes.first().cloned())
+                .find_map(|&p| {
+                    mimes.iter()
+                        .find(|&m| m == p || m.starts_with(&format!("{};", p)))
+                        .map(|s| s.to_string()) // Explicitly convert &String to String
+                })
+                .or_else(|| {
+                    mimes.iter()
+                        .find(|m| m.starts_with("image/"))
+                        .map(|s| s.to_string())
+                })
+                .or_else(|| {
+                    mimes.iter()
+                        .find(|m| m.starts_with("text/"))
+                        .map(|s| s.to_string())
+                })
+                .or_else(|| mimes.first().map(|s| s.to_string()))
                 .unwrap_or_else(|| DEFAULT_MIME.to_string());
+
+            if state.verbose {
+                println!("{}selected format: {}", LOG_INFO, mime_to_get);
+            }
 
             let is_image = mime_to_get.starts_with("image/");
             let (read_file, write_fd) = match make_pipe(is_image) {
@@ -149,12 +165,11 @@ impl Dispatch<ExtDataControlDeviceV1, ()> for WaylandState {
 
                     let mut final_mime = mime_to_get;
 
-                    // 🚀 File Promotion Logic: URI to Binary
+                    // Conditional Promotion: URIs pointing to images are ingested as binary
                     if final_mime == MIME_URI_LIST {
                         let uri_content = String::from_utf8_lossy(&payload);
                         if let Some(line) = uri_content.lines().next() {
                             if line.starts_with("file://") {
-                                // Robust decoding for percent-encoded local paths
                                 let path_raw = line.trim_start_matches("file://");
                                 if let Ok(decoded_path) = percent_encoding::percent_decode_str(path_raw).decode_utf8() {
                                     let path = std::path::Path::new(decoded_path.as_ref());
@@ -170,7 +185,6 @@ impl Dispatch<ExtDataControlDeviceV1, ()> for WaylandState {
                                         };
 
                                         if let Some(m) = file_mime {
-                                            // Promotion: Ingest actual file data from disk
                                             if let Ok(file_data) = std::fs::read(path) {
                                                 payload = file_data;
                                                 final_mime = m.to_string();
@@ -185,7 +199,6 @@ impl Dispatch<ExtDataControlDeviceV1, ()> for WaylandState {
                         }
                     }
 
-                    // Database persistence with MRU logic
                     if let Ok(mut db_conn) = rusqlite::Connection::open(&db_path) {
                         db_conn.busy_timeout(std::time::Duration::from_millis(SQLITE_TIMEOUT_MS)).ok();
                         db_conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;").ok();
@@ -210,7 +223,7 @@ impl Dispatch<ExtDataControlDeviceV1, ()> for WaylandState {
 
                         let res = db_conn.execute(
                             "INSERT INTO clipboard (timestamp, mime, size, preview, content, hash) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                            rusqlite::params![ts, final_mime, payload.len() as i64, preview, payload, hash],
+                            rusqlite::params![ts, final_mime.clone(), payload.len() as i64, preview, payload, hash],
                         );
 
                         if res.is_ok() && is_verbose {
@@ -220,7 +233,6 @@ impl Dispatch<ExtDataControlDeviceV1, ()> for WaylandState {
                     }
                 });
             } else {
-                // Action Mode: Direct buffer population
                 let mut buf = Vec::new();
                 let mut reader = read_file.take(268435456);
                 if reader.read_to_end(&mut buf).is_ok() {

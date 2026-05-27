@@ -66,16 +66,21 @@ pub fn copy_to_os(mime: &str, data: Vec<u8>, verbose: bool) {
     if let (Some(manager), Some(seat)) = (&state.manager, &state.seat) {
         let source = manager.create_data_source(&qh, ());
         
-        // Advertise primary MIME
+        // Serve the exact format stored in the database
         source.offer(mime.to_string());
         
-        // Re-introduce fallback Mimes for text to ensure legacy compatibility.
         if mime.contains("text") {
             for alt in TEXT_MIME_ALTS {
-                if *alt != mime {
-                    source.offer(alt.to_string());
-                }
+                if *alt != mime { source.offer(alt.to_string()); }
             }
+        } 
+
+        // Compatibility Fallback:
+        // If we have a specific image (e.g., WebP), also offer image/png 
+        // to prevent legacy apps (that only know PNG) from ignoring the clipboard.
+        // The data_control.rs Send handler will transcode or provide data if compatible.
+        if mime.starts_with("image/") && mime != "image/png" {
+            source.offer("image/png".to_string());
         }
 
         let device = manager.get_data_device(seat, &qh, ());
