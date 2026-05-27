@@ -24,6 +24,8 @@ md5 = "0.8.0"
 unicode-width = "0.2.2"
 # Utilized for exploring file path.l
 percent-encoding = "2.3.2"
+# 
+ctrlc = "3.5.2"
 
 [profile.release]
 strip = true      # Strips debug symbols from the final artifact to minimize binary footprint size dramatically.
