@@ -20,6 +20,7 @@ pub struct ArgContext {
     pub verbose: bool,
     pub help: bool,
     pub version: bool,
+    pub use_id: bool,
     /// Ordered list of non-flag arguments.
     pub positionals: Vec<String>,
     /// List of flags not recognized by the global parser.
@@ -36,6 +37,7 @@ impl ArgContext {
             verbose: false,
             help: false,
             version: false,
+            use_id: false,
             positionals: Vec::new(),
             unknown_flags: Vec::new(),
         };
@@ -49,6 +51,7 @@ impl ArgContext {
                     "--verbose" => ctx.verbose = true,
                     "--help" => ctx.help = true,
                     "--version" => ctx.version = true,
+                    "--id" => ctx.use_id = true,
                     _ => ctx.unknown_flags.push(arg.clone()),
                 }
             } else if arg.starts_with('-') && arg.len() > 1 {
@@ -60,6 +63,7 @@ impl ArgContext {
                         'v' => ctx.verbose = true,
                         'h' => ctx.help = true,
                         'V' => ctx.version = true,
+                        'i' => ctx.use_id = true,
                         _ => ctx.unknown_flags.push(format!("-{}", c)),
                     }
                 }
