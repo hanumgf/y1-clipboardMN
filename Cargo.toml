@@ -22,6 +22,8 @@ libc = "0.2.186"
 md5 = "0.8.0"
 # Utilized for calculating full-width and half-width terminal layout bounds accurately.
 unicode-width = "0.2.2"
+# Utilized for exploring file path.l
+percent-encoding = "2.3.2"
 
 [profile.release]
 strip = true      # Strips debug symbols from the final artifact to minimize binary footprint size dramatically.
