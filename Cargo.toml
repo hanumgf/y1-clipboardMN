@@ -1,6 +1,6 @@
 [package]
 name = "y1-clipboard"
-version = "1.0.0"
+version = "2.0.0"
 edition = "2021"
 description = "A robust, unified clipboard manager for Wayland with SQLite storage."
 
@@ -13,7 +13,7 @@ smithay-client-toolkit = "0.20.0"
 # --- Storage (SQLite) ---
 # Enabling the "bundled" feature ensures standalone compilation and runtime robustness 
 # across target environments without relying on system-installed SQLite packages.
-rusqlite = { version = "0.39.0", features = ["bundled"] }
+rusqlite = { version = "0.40.0", features = ["bundled"] }
 
 # --- Utilities ---
 # Utilized for robust pipe communications and avoiding runtime deadlocks.
@@ -24,7 +24,7 @@ md5 = "0.8.0"
 unicode-width = "0.2.2"
 # Utilized for exploring file path.l
 percent-encoding = "2.3.2"
-# 
+# Used for receiving signals from the terminal
 ctrlc = "3.5.2"
 
 [profile.release]

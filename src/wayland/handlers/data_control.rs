@@ -217,7 +217,7 @@ impl Dispatch<ExtDataControlDeviceV1, ()> for WaylandState {
                     }
 
                     // Database persistence utilizing the pre-computed hash
-                    if let Ok(mut db_conn) = rusqlite::Connection::open(&db_path) {
+                    if let Ok(db_conn) = rusqlite::Connection::open(&db_path) {
                         db_conn.busy_timeout(std::time::Duration::from_millis(SQLITE_TIMEOUT_MS)).ok();
                         db_conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;").ok();
 
