@@ -140,7 +140,7 @@ impl Dispatch<ExtDataControlDeviceV1, ()> for WaylandState {
                     // Pre-allocate context for streaming hash calculation
                     let mut hash_context = md5::Context::new();
                     
-                    // 🚀 Optimization: Page-aligned buffer size (64KB) for efficient syscalls
+                    // Optimization: Page-aligned buffer size (64KB) for efficient syscalls
                     let mut chunk = vec![0u8; 65536];
                     let mut payload = Vec::with_capacity(1048576); // Start with 1MB to reduce early re-allocs
                     let mut reader = read_file.take(268435456); // 256MB safety limit

@@ -55,7 +55,7 @@ pub fn copy_to_os(mime: &str, data: Vec<u8>, verbose: bool) {
     let qh = event_queue.handle();
     let _registry = conn.display().get_registry(&qh, ());
 
-    // 🚀 Optimization: Move 'data' instead of cloning where possible
+    // Optimization: Move 'data' instead of cloning where possible
     let mut state = WaylandState::new_action(mime.to_string(), verbose);
     state.rx_buf = data; 
     state.is_provider = true; 
