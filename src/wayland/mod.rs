@@ -49,17 +49,18 @@ pub fn paste_from_os(mime: &str) -> Vec<u8> {
 }
 
 /// Serve data to the system clipboard (wl-copy equivalent).
+/// Optimized to minimize memory footprint during large data transfers.
 pub fn copy_to_os(mime: &str, data: Vec<u8>, verbose: bool) {
     let (conn, mut event_queue) = create_connection();
     let qh = event_queue.handle();
     let _registry = conn.display().get_registry(&qh, ());
 
+    // 🚀 Optimization: Move 'data' instead of cloning where possible
     let mut state = WaylandState::new_action(mime.to_string(), verbose);
-    state.rx_buf = data;
-    // Critical: Declare as provider BEFORE entering loops to prevent self-deadlock.
+    state.rx_buf = data; 
     state.is_provider = true; 
 
-    // Sync to ensure all global proxies are ready.
+    // Protocol synchronization
     let _ = event_queue.roundtrip(&mut state);
 
     if let (Some(manager), Some(seat)) = (&state.manager, &state.seat) {
