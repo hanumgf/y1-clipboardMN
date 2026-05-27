@@ -1,10 +1,10 @@
 
-// src/storage/main.rs
+// src/storage/mod.rs
 
 use rusqlite::{params, Connection, Result};
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::fs;
-use std::os::unix::fs::PermissionsExt; // For permission configurations
+use std::os::unix::fs::PermissionsExt;
 use crate::core::constants::*;
 
 pub struct ClipboardDb {
@@ -13,15 +13,11 @@ pub struct ClipboardDb {
 }
 
 impl ClipboardDb {
-    /// Open the database safely and execute initial runtime configuration.
+    /// Open the database with optimized memory and caching configurations.
     pub fn open() -> Self {
-        // 1. Resolve secure file path via core module utilities
         let db_path = crate::core::get_db_path();
-
-        // 2. Establish database connection context
         let conn = Connection::open(&db_path).expect("failed to open sqlite connection");
 
-        // 3. Security: Enforce owner-only (600) filesystem permissions to eliminate multi-user leakage risks
         if let Ok(metadata) = fs::metadata(&db_path) {
             let mut perms = metadata.permissions();
             if perms.mode() != 0o600 {
@@ -30,16 +26,17 @@ impl ClipboardDb {
             }
         }
 
-        // 4. Performance & Stability: Inject global optimization PRAGMA instructions
+        // 🚀 Optimization: Enhanced PRAGMA settings for high-throughput BLOB handling
         conn.busy_timeout(std::time::Duration::from_millis(SQLITE_TIMEOUT_MS)).ok();
         conn.execute_batch("
-            PRAGMA journal_mode = WAL;      -- Concurrent read/write operational boost
-            PRAGMA synchronous = NORMAL;    -- Disks synchronization profile optimized for SSDs
-            PRAGMA temp_store = MEMORY;     -- Direct transient records processing to RAM
-            PRAGMA mmap_size = 268435456;   -- Memory-map limit up to 256MB for handling large images
+            PRAGMA journal_mode = WAL;
+            PRAGMA synchronous = NORMAL;
+            PRAGMA temp_store = MEMORY;
+            PRAGMA mmap_size = 268435456;   -- 256MB memory map
+            PRAGMA cache_size = -64000;     -- 64MB page cache
+            PRAGMA page_size = 4096;        -- Standard page size for SSD alignment
         ").ok();
 
-        // 5. Initialize layout schemas
         conn.execute(
             "CREATE TABLE IF NOT EXISTS clipboard (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -52,32 +49,34 @@ impl ClipboardDb {
             )", [],
         ).expect("failed to initialize schema");
 
-        // Indexes: Accelerate recent retrieval operations and keyword filtering passes
         conn.execute("CREATE INDEX IF NOT EXISTS idx_ts ON clipboard(timestamp)", []).ok();
         conn.execute("CREATE INDEX IF NOT EXISTS idx_hash ON clipboard(hash)", []).ok();
 
         Self { path: db_path, conn }
     }
 
-    /// Insert raw data payloads using transactional atomic guarantees.
-    pub fn insert_raw(&mut self, mime: &str, data: &[u8]) -> rusqlite::Result<()> {
+    /// Primary insertion logic. Accepts a pre-calculated hash to avoid redundant CPU cycles.
+    pub fn insert_raw(&mut self, mime: &str, data: &[u8]) -> Result<()> {
+        let hash = format!("{:x}", md5::compute(data));
+        self.insert_with_hash(mime, data, &hash)
+    }
+
+    /// Internal logic for atomic persistence with pre-computed hash validation.
+    /// 🚀 Optimization: Minimizes data traversal by using the hash provided by the caller.
+    pub fn insert_with_hash(&mut self, mime: &str, data: &[u8], hash: &str) -> Result<()> {
         if data.is_empty() { return Ok(()); }
 
-        // Privacy compliance filters
         if SENSITIVE_MIME_HINTS.iter().any(|&hint| mime.contains(hint)) {
             return Ok(());
         }
 
         let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64;
-        let hash = format!("{:x}", md5::compute(data));
-
-        // Initialize write transaction scope
         let tx = self.conn.transaction()?;
 
+        // Fast lookup via idx_hash
         let existing: Option<i64> = tx.query_row(
             "SELECT id FROM clipboard WHERE hash = ?1 LIMIT 1",
             params![hash],
-
             |row| row.get(0)
         ).ok();
 
@@ -103,7 +102,8 @@ impl ClipboardDb {
         tx.commit()
     }
 
-    /// Query: High-speed, sanitization-safe metadata scanning profile.
+    // --- Query Methods ---
+
     pub fn search_metadata(&self, query: &str, limit: usize) -> Vec<(i64, i64, String, i64, Option<String>)> {
         let mut stmt = match self.conn.prepare(
             "SELECT id, timestamp, mime, size, preview FROM clipboard 
@@ -123,17 +123,14 @@ impl ClipboardDb {
         rows.filter_map(|r| r.ok()).collect()
     }
 
-    /// Retrieve latest entry: Used primarily by daemons to prevent duplication.
     pub fn get_latest_data(&self) -> Option<Vec<u8>> {
         self.conn.query_row(
             "SELECT content FROM clipboard ORDER BY timestamp DESC LIMIT 1",
             [],
-
             |row| row.get(0)
         ).ok()
     }
 
-    /// Fetch all metadata columns: Tailored for standard list layout rendering.
     pub fn fetch_metadata(&self, limit: usize) -> Vec<(i64, i64, String, i64, Option<String>)> {
         let mut stmt = self.conn.prepare(
             "SELECT id, timestamp, mime, size, preview FROM clipboard ORDER BY timestamp DESC LIMIT ?1"
@@ -148,7 +145,6 @@ impl ClipboardDb {
         self.conn.query_row(
             "SELECT mime, content FROM clipboard WHERE id = ?1",
             params![id],
-
             |row| Ok((row.get(0)?, row.get(1)?))
         ).ok()
     }
@@ -159,21 +155,8 @@ impl ClipboardDb {
         Ok(())
     }
 
-    // pub fn delete_by_index(&self, idx: usize) -> Result<bool> {
-    //     let res = self.conn.execute(
-    //         "DELETE FROM clipboard WHERE id = (
-    //             SELECT id FROM clipboard ORDER BY timestamp DESC LIMIT 1 OFFSET ?1
-    //         )",
-    //         params![idx as i64],
-    //     )?;
-    //     Ok(res > 0)
-    // }
-
     pub fn delete_by_id(&self, id: i64) -> Result<bool> {
-        let res = self.conn.execute(
-            "DELETE FROM clipboard WHERE id = ?1",
-            params![id],
-        )?;
+        let res = self.conn.execute("DELETE FROM clipboard WHERE id = ?1", params![id])?;
         Ok(res > 0)
     }
 
