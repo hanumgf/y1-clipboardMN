@@ -6,6 +6,9 @@ use super::formatter;
 use super::utils::{self, RangeSelection, ArgContext};
 use crate::core::constants::*;
 
+type ItemData = (i64, i64, String, i64, Option<String>);
+type IndexItem<'a> = (usize, &'a ItemData);
+
 /// Entry point for the 'list' command.
 pub fn run(args: &[String], db: ClipboardDb) {
     let ctx = ArgContext::parse(args);
@@ -34,14 +37,14 @@ pub fn run(args: &[String], db: ClipboardDb) {
     let all_items = db.fetch_metadata(MAX_HISTORY);
     let total_stored = db.get_total_count();
     let len = all_items.len();
-    
-    // Determine target items based on flags and range selection
-    let target_items: Vec<&(i64, i64, String, i64, Option<String>)> = if ctx.full {
-        all_items.iter().collect()
+
+    // Bind metadata with their original indices to maintain ID consistency
+    let target_items: Vec<IndexItem> = if ctx.full {
+        all_items.iter().enumerate().collect()
     } else {
         match selection {
             RangeSelection::Single(n) => {
-                if n < len { vec![&all_items[n]] } else { vec![] }
+                if n < len { vec![(n, &all_items[n])] } else { vec![] }
             }
             RangeSelection::Range(start, end) => {
                 if len == 0 {
@@ -50,32 +53,37 @@ pub fn run(args: &[String], db: ClipboardDb) {
                     let s = start.min(len - 1);
                     let e = end.min(len - 1);
                     if s <= e {
-                        all_items[s..=e].iter().collect()
+                        // Capture the original absolute index 'i'
+                        all_items.iter().enumerate().skip(s).take(e - s + 1).collect()
                     } else {
                         vec![]
                     }
                 }
             }
             RangeSelection::Latest(limit) => {
-                all_items.iter().take(limit).collect()
+                all_items.iter().enumerate().take(limit).collect()
             }
         }
     };
 
     if target_items.is_empty() {
-        if !ctx.raw {
-            println!("{}no entries found matching the criteria.", LOG_INFO);
-        }
+        if !ctx.raw { println!("{}no entries found matching the criteria.", LOG_INFO); }
         return;
     }
 
-    // Execute rendering with the preferred visual balance
-    render_list("Clipboard History", &target_items, total_stored, ctx.raw);
+    render_list("Clipboard History", &target_items, total_stored, ctx.raw, ctx.use_id);
 }
 
 /// Render metadata items in a structured table layout.
-pub fn render_list(title: &str, items: &Vec<&(i64, i64, String, i64, Option<String>)>, total_stored: usize, is_raw: bool) {
-    let label_width = 6; 
+/// Items are expected as a pair of (original_index, metadata_reference).
+pub fn render_list(
+    title: &str, 
+    items: &[IndexItem], 
+    total_stored: usize, 
+    is_raw: bool,
+    use_id: bool
+) {
+    let label_width = 6;
     let total_width = WIDTH_ID + WIDTH_WHEN + WIDTH_SIZE + PREVIEW_WIDTH + label_width + (TABLE_SEP.len() * 3);
 
     if !is_raw {
@@ -94,10 +102,13 @@ pub fn render_list(title: &str, items: &Vec<&(i64, i64, String, i64, Option<Stri
         println!("{}", TABLE_LINE_CHAR.repeat(total_width));
     }
 
-    for (i, item) in items.iter().enumerate() {
-        let (_real_id, ts, mime, size, preview) = item;
+    for (abs_idx, item) in items {
+        let (real_id, ts, mime, size, preview) = *item;
         let label = formatter::get_label(mime);
-        
+
+        // Use absolute history index 'abs_idx' instead of local loop counter
+        let id_to_display = if use_id { real_id.to_string() } else { abs_idx.to_string() };
+
         let raw_preview = if mime.starts_with("image/") {
             format!("[{}] - {} bytes", mime.split('/').nth(1).unwrap_or(""), size)
         } else {
@@ -109,13 +120,17 @@ pub fn render_list(title: &str, items: &Vec<&(i64, i64, String, i64, Option<Stri
         if is_raw {
             println!(
                 "[{:>wid_id$}] {} {}",
-                i, label, formatted_preview,
-                wid_id = WIDTH_ID - 2
+                id_to_display, label, formatted_preview,
+                wid_id = WIDTH_ID / 2
             );
         } else {
             println!(
                 "[{:>wid_id$}]{sep}{:>wid_when$}{sep}{:>wid_size$} B{sep}{} {}",
-                i, formatter::format_time(*ts as u64), size, label, formatted_preview,
+                id_to_display,
+                formatter::format_time(*ts as u64),
+                size,
+                label,
+                formatted_preview,
                 wid_id = WIDTH_ID - 2,
                 wid_when = WIDTH_WHEN,
                 wid_size = WIDTH_SIZE - 2,

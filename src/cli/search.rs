@@ -40,8 +40,12 @@ pub fn run(args: &[String], db: ClipboardDb) {
     }
 
     // Prepare references and delegate rendering to the unified list module
-    let refs: Vec<_> = results.iter().collect();
+    let refs: Vec<(usize, _)> = results
+        .iter()
+        .enumerate()
+        .collect();
+
     let title = format!("search: '{}' ({} hits)", query, results.len());
     
-    list::render_list(&title, &refs, total_stored, ctx.raw);
+    list::render_list(&title, &refs, total_stored, ctx.raw, ctx.use_id);
 }
