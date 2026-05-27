@@ -9,13 +9,12 @@ use wayland_protocols::ext::data_control::v1::client::{
 };
 use std::sync::{Arc, Mutex};
 
-/// Container for MIME types offered by a specific selection.
-/// Used to maintain isolation between concurrent data offers.
+/// Thread-safe container for MIME types associated with a specific DataOffer.
 pub struct OfferData {
     pub mimes: Arc<Mutex<Vec<String>>>,
 }
 
-/// Core state architecture for Wayland protocol interaction.
+/// Central state manager for Wayland protocol synchronization and data buffering.
 pub struct WaylandState {
     pub manager: Option<ExtDataControlManagerV1>,
     pub seat: Option<WlSeat>,
@@ -30,6 +29,7 @@ pub struct WaylandState {
 }
 
 impl WaylandState {
+    /// Initializes a state context tailored for the background monitoring daemon.
     pub fn new_daemon(db: ClipboardDb, verbose: bool) -> Self {
         Self {
             manager: None,
@@ -45,6 +45,7 @@ impl WaylandState {
         }
     }
 
+    /// Initializes a lightweight state context for discrete CLI operations.
     pub fn new_action(target_mime: String, verbose: bool) -> Self {
         Self {
             manager: None,

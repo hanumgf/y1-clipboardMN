@@ -101,6 +101,13 @@ impl Dispatch<ExtDataControlDeviceV1, ()> for WaylandState {
 
             if mimes.is_empty() { return; }
 
+            if is_sensitive(&mimes) {
+                if state.verbose {
+                    eprintln!("{}sensitive hints detected; skipping ingestion.", LOG_INFO);
+                }
+                return;
+            }
+
             // Logic: Dynamic MIME selection prioritizing modern formats
             let priority: &[&str] = &[
                 "image/webp",
@@ -131,10 +138,6 @@ impl Dispatch<ExtDataControlDeviceV1, ()> for WaylandState {
                 .or_else(|| mimes.first().map(|s| s.to_string()))
                 .unwrap_or_else(|| DEFAULT_MIME.to_string());
 
-            if state.verbose {
-                println!("{}selected format: {}", LOG_INFO, mime_to_get);
-            }
-
             let is_image = mime_to_get.starts_with("image/");
             let (read_file, write_fd) = match make_pipe(is_image) {
                 Some(p) => p,
@@ -151,21 +154,37 @@ impl Dispatch<ExtDataControlDeviceV1, ()> for WaylandState {
 
                 std::thread::spawn(move || {
                     let mut hash_context = md5::Context::new();
-                    let mut chunk = vec![0u8; 65536];
-                    let mut payload = Vec::with_capacity(1048576);
-                    let mut reader = read_file.take(268435456); 
+                    let mut payload = Vec::with_capacity(1048576); 
+                    let mut reader = read_file.take(268435456);
 
-                    while let Ok(n) = reader.read(&mut chunk) {
-                        if n == 0 { break; }
-                        hash_context.consume(&chunk[..n]);
-                        payload.extend_from_slice(&chunk[..n]);
+                    // Optimization: Explicitly page-aligned buffer allocation (64KB size, 4KB alignment)
+                    // This reduces TLB misses and optimizes direct data transfer from the kernel pipe.
+                    let layout = std::alloc::Layout::from_size_align(65536, 4096).unwrap();
+                    let ptr = unsafe { std::alloc::alloc(layout) };
+                    
+                    if ptr.is_null() { return; }
+
+                    let chunk = unsafe { std::slice::from_raw_parts_mut(ptr, layout.size()) };
+
+                    loop {
+                        match reader.read(chunk) {
+                            Ok(0) => break,
+                            Ok(n) => {
+                                hash_context.consume(&chunk[..n]);
+                                payload.extend_from_slice(&chunk[..n]);
+                            }
+                            Err(_) => break,
+                        }
                     }
+
+                    // Explicitly deallocate the aligned buffer after ingestion
+                    unsafe { std::alloc::dealloc(ptr, layout) };
 
                     if payload.is_empty() { return; }
 
                     let mut final_mime = mime_to_get;
 
-                    // Conditional Promotion: URIs pointing to images are ingested as binary
+                    // URI-to-Binary promotion logic for File Manager integration
                     if final_mime == MIME_URI_LIST {
                         let uri_content = String::from_utf8_lossy(&payload);
                         if let Some(line) = uri_content.lines().next() {
@@ -173,7 +192,6 @@ impl Dispatch<ExtDataControlDeviceV1, ()> for WaylandState {
                                 let path_raw = line.trim_start_matches("file://");
                                 if let Ok(decoded_path) = percent_encoding::percent_decode_str(path_raw).decode_utf8() {
                                     let path = std::path::Path::new(decoded_path.as_ref());
-                                    
                                     if path.exists() && path.is_file() {
                                         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
                                         let file_mime = match ext.to_lowercase().as_str() {
@@ -183,7 +201,6 @@ impl Dispatch<ExtDataControlDeviceV1, ()> for WaylandState {
                                             "gif" => Some("image/gif"),
                                             _ => None,
                                         };
-
                                         if let Some(m) = file_mime {
                                             if let Ok(file_data) = std::fs::read(path) {
                                                 payload = file_data;
@@ -199,6 +216,7 @@ impl Dispatch<ExtDataControlDeviceV1, ()> for WaylandState {
                         }
                     }
 
+                    // Database persistence utilizing the pre-computed hash
                     if let Ok(mut db_conn) = rusqlite::Connection::open(&db_path) {
                         db_conn.busy_timeout(std::time::Duration::from_millis(SQLITE_TIMEOUT_MS)).ok();
                         db_conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;").ok();
