@@ -6,44 +6,49 @@ use crate::core::constants::*;
 use crate::cli::utils::ArgContext;
 use std::io::{self, Write};
 
-/// Remove a specific history record by its numerical index.
+/// Remove a history record by its MRU index or persistent database ID.
 pub fn delete_run(args: &[String], db: ClipboardDb) {
     let ctx = ArgContext::parse(args);
 
     if !ctx.unknown_flags.is_empty() || ctx.raw || ctx.full || ctx.force || ctx.verbose {
-        eprintln!("{}command 'delete' does not support options.", LOG_ERROR);
+        eprintln!("{}command 'delete' does not support specified options.", LOG_ERROR);
         return;
     }
 
-    let idx = match ctx.positionals.first() {
-        Some(s) => match s.parse::<usize>() {
-            Ok(i) => i,
-            Err(_) => {
-                eprintln!("{}invalid numerical index: '{}'", LOG_ERROR, s);
-                return;
-            }
-        },
+    let input_str = match ctx.positionals.first() {
+        Some(s) => s,
         None => {
-            eprintln!("{}missing required history index.", LOG_ERROR);
+            eprintln!("{}missing required identifier.", LOG_ERROR);
             return;
         }
     };
 
-    // 1. Fetch current metadata state to map index to real_id
-    let meta = db.fetch_metadata(MAX_HISTORY);
-    
-    // 2. Safely resolve and execute deletion by persistent ID
-    match meta.get(idx) {
-        Some(&(real_id, ..)) => {
-            match db.delete_by_id(real_id) {
-                Ok(true) => println!("{}removed entry [{}].", LOG_INFO, idx),
-                Ok(false) => eprintln!("{}failed to remove record with ID {}.", LOG_ERROR, real_id),
-                Err(e) => eprintln!("{}storage transaction failure: {}", LOG_ERROR, e),
+    let val = match input_str.parse::<i64>() {
+        Ok(v) => v,
+        Err(_) => {
+            eprintln!("{}invalid numerical value: '{}'", LOG_ERROR, input_str);
+            return;
+        }
+    };
+
+    // Resolve real_id: directly from input or via metadata offset
+    let real_id = if ctx.use_id {
+        val
+    } else {
+        let meta = db.fetch_metadata(MAX_HISTORY);
+        match meta.get(val as usize) {
+            Some(&(id, ..)) => id,
+            None => {
+                eprintln!("{}index [{}] is out of bounds.", LOG_ERROR, val);
+                return;
             }
         }
-        None => {
-            eprintln!("{}index [{}] is out of bounds.", LOG_ERROR, idx);
-        }
+    };
+
+    match db.delete_by_id(real_id) {
+        Ok(true) => println!("{}removed entry [ID: {}].", LOG_INFO, real_id),
+        Ok(false) => eprintln!("{}record with ID {} not found.", LOG_ERROR, real_id),
+        Err(e) => eprintln!("{}storage transaction failure: {}", LOG_ERROR, e),
     }
 }
 

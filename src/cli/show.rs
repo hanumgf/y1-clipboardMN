@@ -6,73 +6,67 @@ use crate::core::constants::*;
 use crate::cli::utils::ArgContext;
 use std::io::{self, Write};
 
-/// Detailed inspection of metadata and payload with strict argument validation.
+/// Inspect entry metadata and payload using index or persistent database ID.
 pub fn run(args: &[String], db: ClipboardDb) {
     let ctx = ArgContext::parse(args);
 
-    // Strict validation: 'show' only permits --raw/-R and --verbose/-v
     if !ctx.unknown_flags.is_empty() || ctx.full || ctx.force {
         eprintln!("{}command 'show' does not support specified options.", LOG_ERROR);
         return;
     }
 
-    // Arity enforcement: ensure exactly one positional index is supplied
-    if ctx.positionals.is_empty() {
-        eprintln!("{}missing required history entry index.", LOG_ERROR);
-        println!("usage: y1-clip show <id> [--raw | -R]");
-        return;
-    }
-
-    if ctx.positionals.len() > 1 {
-        eprintln!("{}command 'show' accepts only one index argument.", LOG_ERROR);
-        return;
-    }
-
-    let idx_str = &ctx.positionals[0];
-    let idx = match idx_str.parse::<usize>() {
-        Ok(i) => i,
-        Err(_) => {
-            eprintln!("{}invalid numerical index: '{}'", LOG_ERROR, idx_str);
-            return;
-        }
-    };
-
-    // Resolve internal database ID from the user-provided display index
-    let meta = db.fetch_metadata(MAX_HISTORY);
-    let real_id = match meta.get(idx) {
-        Some(&(id, _, _, _, _)) => id,
+    let input_str = match ctx.positionals.first() {
+        Some(s) => s,
         None => {
-            eprintln!("{}index [{}] is outside current history bounds.", LOG_ERROR, idx);
+            eprintln!("{}missing required identifier.", LOG_ERROR);
             return;
         }
     };
 
-    // Extract the full binary or text payload from storage
-    let (mime, val) = match db.get_content_by_id(real_id) {
+    let val = match input_str.parse::<i64>() {
+        Ok(v) => v,
+        Err(_) => {
+            eprintln!("{}invalid numerical value: '{}'", LOG_ERROR, input_str);
+            return;
+        }
+    };
+
+    let real_id = if ctx.use_id {
+        val
+    } else {
+        let meta = db.fetch_metadata(MAX_HISTORY);
+        match meta.get(val as usize) {
+            Some(&(id, ..)) => id,
+            None => {
+                eprintln!("{}index [{}] is out of bounds.", LOG_ERROR, val);
+                return;
+            }
+        }
+    };
+
+    let (mime, payload) = match db.get_content_by_id(real_id) {
         Some(res) => res,
         None => {
-            eprintln!("{}failed to fetch payload for record [{}].", LOG_ERROR, idx);
+            eprintln!("{}failed to fetch payload for ID {}.", LOG_ERROR, real_id);
             return;
         }
     };
 
     if ctx.raw {
-        // RAW mode: Directly stream unmodified bytes to stdout
         let mut stdout = io::stdout();
-        let _ = stdout.write_all(&val);
+        let _ = stdout.write_all(&payload);
         let _ = stdout.flush();
         return;
     }
 
-    // HUMAN mode: Structure metadata and provide decoded string preview
     println!("--- DETAILS ---");
-    println!("ID:       {}", idx);
+    println!("DB_ID:    {}", real_id);
     println!("MIME:     {}", mime);
-    println!("SIZE:     {} bytes", val.len());
+    println!("SIZE:     {} bytes", payload.len());
     println!("---------------");
 
     if mime.contains("text") || mime.contains("UTF8") {
-        println!("{}", String::from_utf8_lossy(&val));
+        println!("{}", String::from_utf8_lossy(&payload));
     } else {
         println!("[binary payload: terminal display suppressed]");
         println!("hint: utilize '--raw' to pipe data to a file.");

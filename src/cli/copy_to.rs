@@ -7,49 +7,49 @@ use crate::cli::utils::ArgContext;
 use std::process::{Command, Stdio};
 use std::env;
 
-/// Re-broadcast a history entry to the system clipboard and promote it to the top.
+/// Re-broadcast an entry to the system clipboard using MRU index or database ID.
 pub fn run(args: &[String], db: ClipboardDb) {
     let ctx = ArgContext::parse(args);
 
-    // Strict validation: 'copy-to' accepts only --verbose/-v and exactly 1 positional index.
     if !ctx.unknown_flags.is_empty() || ctx.raw || ctx.full || ctx.force {
         eprintln!("{}command 'copy-to' does not support specified options.", LOG_ERROR);
         return;
     }
 
-    // Arity enforcement: ensure only the target index is provided.
-    if ctx.positionals.len() != 1 {
-        eprintln!("{}command 'copy-to' requires exactly one history index.", LOG_ERROR);
-        println!("usage: y1-clip copy-to <id>");
-        return;
-    }
-
-    let idx_str = &ctx.positionals[0];
-    let idx = match idx_str.parse::<usize>() {
-        Ok(i) => i,
-        Err(_) => {
-            eprintln!("{}invalid numerical index: '{}'", LOG_ERROR, idx_str);
-            return;
-        }
-    };
-
-    // Map display index to persistent database identifier
-    let meta = db.fetch_metadata(MAX_HISTORY);
-    let real_id = match meta.get(idx) {
-        Some(&(id, _, _, _, _)) => id,
+    let input_str = match ctx.positionals.first() {
+        Some(s) => s,
         None => {
-            eprintln!("{}index [{}] is out of bounds.", LOG_ERROR, idx);
+            eprintln!("{}missing required identifier.", LOG_ERROR);
             return;
         }
     };
 
-    // Update entry timestamp to implement Most Recently Used (MRU) logic
+    let val = match input_str.parse::<i64>() {
+        Ok(v) => v,
+        Err(_) => {
+            eprintln!("{}invalid numerical value: '{}'", LOG_ERROR, input_str);
+            return;
+        }
+    };
+
+    let real_id = if ctx.use_id {
+        val
+    } else {
+        let meta = db.fetch_metadata(MAX_HISTORY);
+        match meta.get(val as usize) {
+            Some(&(id, ..)) => id,
+            None => {
+                eprintln!("{}index [{}] is out of bounds.", LOG_ERROR, val);
+                return;
+            }
+        }
+    };
+
     if let Err(e) = db.update_timestamp(real_id) {
         eprintln!("{}storage update failure: {}", LOG_ERROR, e);
         return;
     }
 
-    // Spawn an independent background process to serve Wayland selection requests
     match env::current_exe() {
         Ok(exe) => {
             let status = Command::new(exe)
@@ -63,7 +63,7 @@ pub fn run(args: &[String], db: ClipboardDb) {
 
             if status.is_ok() {
                 if ctx.verbose {
-                    println!("{}", log_restore(idx));
+                    println!("{}", log_restore(real_id as usize));
                 }
             } else {
                 eprintln!("{}failed to spawn background synchronization worker.", LOG_ERROR);
