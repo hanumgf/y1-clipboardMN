@@ -44,19 +44,25 @@ pub fn start_daemon(db: ClipboardDb, verbose: bool) {
         return;
     }
 
-    // 6. Execute the primary event polling loop
-    // Stability: Runs indefinitely as long as blocking_dispatch stays free of critical interface connection dropouts.
-    loop {
+    // 6. Execute the primary event polling loop with signal awareness
+    // Stability: Terminates gracefully when a system signal is caught or connection is lost.
+    while !crate::core::is_exiting() {
         match event_queue.blocking_dispatch(&mut state) {
             Ok(_) => {
-                // Standard asynchronous event processing driven automatically by individual Dispatch handlers.
-                // Performance: Keeps the main execution block lean; complex input operations are delegated elsewhere.
+                // Background tasks are handled by Dispatch implementations.
             }
             Err(e) => {
-                // Safety/Stability: Gracefully traps compositor crashes or active desktop session termination signs.
-                eprintln!("{}wayland connection lost: {}", LOG_ERROR, e);
+                // Log error unless it was caused by a deliberate exit signal
+                if !crate::core::is_exiting() {
+                    eprintln!("{}wayland connection lost: {}", LOG_ERROR, e);
+                }
                 break; 
             }
         }
+    }
+    
+    // Explicit cleanup happens here as 'state' and 'db' are dropped
+    if verbose {
+        println!("{}shutting down daemon safely.", LOG_INFO);
     }
 }

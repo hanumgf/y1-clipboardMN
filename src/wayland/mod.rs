@@ -90,11 +90,12 @@ pub fn copy_to_os(mime: &str, data: Vec<u8>, verbose: bool) {
         let _ = conn.flush();
 
         // Main serving loop. Exits on 'Cancelled' event in handlers.
-        loop {
+        while !crate::core::is_exiting() {
             if event_queue.blocking_dispatch(&mut state).is_err() {
                 break; 
             }
         }
+
     } else {
         eprintln!("{}failed to secure required Wayland protocols.", LOG_ERROR);
     }
