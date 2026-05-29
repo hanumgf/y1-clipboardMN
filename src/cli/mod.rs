@@ -57,30 +57,6 @@ pub fn handle_command(args: &[String], db: ClipboardDb) {
         "help"       => help::print_help(),
         "version"    => help::print_version(),
 
-        // --- Low-level Internal: Selection Service Worker ---
-        // Decoupled background process specifically for serving Wayland data egress.
-        //"serve-internal" => {
-        //    // Expected indices: [2] record ID (i64), [3] verbose flag (string bool)
-        //    if args.len() >= 4 {
-        //        let id_str = &args[2];
-        //        let is_verbose = args[3] == "true";
-
-        //        if let Ok(real_id) = id_str.parse::<i64>() {
-        //            // Cache record payload into memory before entering the blocking loop
-        //            if let Some((mime, val)) = db.get_content_by_id(real_id) {
-        //                // Resource Safeguard: Close database handles to release SQLite file locks.
-        //                // Prevents background workers from obstructing concurrent storage operations.
-        //                drop(db);
-
-        //                // Transfer control to the persistent Wayland egress serving loop
-        //                crate::wayland::copy_to_os(&mime, val, is_verbose);
-        //            }
-        //        }
-        //    }
-        //    // Enforce process termination immediately upon service completion or sync failure.
-        //    std::process::exit(0);
-        //}
-
         // --- Error State Handler ---
         _ => {
             eprintln!("{}unrecognized command identifier: '{}'", LOG_ERROR, cmd);

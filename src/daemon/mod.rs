@@ -9,32 +9,21 @@ use std::os::unix::net::UnixListener;
 use std::sync::mpsc;
 use std::io::Read;
 use std::fs;
-use std::time::Duration;
 
 pub fn start_daemon(db: ClipboardDb, verbose: bool) {
     let (tx, rx) = mpsc::channel::<i64>();
     let socket_path = crate::core::get_socket_path();
     let _ = fs::remove_file(&socket_path);
 
+    // IPC Thread: Use blocking listener for stability
     let listener = UnixListener::bind(&socket_path).expect("failed to bind IPC socket");
-    listener.set_nonblocking(true).ok();
-
     std::thread::spawn(move || {
-        for stream in listener.incoming() {
-            match stream {
-                Ok(mut s) => {
-                    let mut buf = String::new();
-                    if s.read_to_string(&mut buf).is_ok() {
-                        if let Ok(id) = buf.trim().parse::<i64>() {
-                            let _ = tx.send(id);
-                        }
-                    }
+        for mut s in listener.incoming().flatten() {
+            let mut buf = String::new();
+            if s.read_to_string(&mut buf).is_ok() {
+                if let Ok(id) = buf.trim().parse::<i64>() {
+                    let _ = tx.send(id);
                 }
-                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    std::thread::sleep(Duration::from_millis(50));
-                    continue;
-                }
-                Err(_) => break,
             }
         }
     });
@@ -48,16 +37,18 @@ pub fn start_daemon(db: ClipboardDb, verbose: bool) {
     state.last_data = last_stored;
     state.target_mime = DEFAULT_MIME.to_string();
 
+    // Initial Wayland Sync
     if event_queue.roundtrip(&mut state).is_err() { return; }
     if let (Some(manager), Some(seat)) = (&state.manager, &state.seat) {
         state.device = Some(manager.get_data_device(seat, &qh, ()));
         let _ = conn.flush();
     } else { return; }
 
-    println!("{}{}", LOG_INFO, MSG_DAEMON_START);
-
+    use std::os::fd::{AsFd, AsRawFd};
     while !crate::core::is_exiting() {
-        if let Ok(real_id) = rx.recv_timeout(Duration::from_millis(50)) {
+        // 1. Process IPC commands (Non-blocking check)
+        // Drains the channel to handle rapid succession of 'store' or 'copy-to' commands.
+        while let Ok(real_id) = rx.try_recv() {
             if let Some(ref mut db) = state.db {
                 if let Some((mime, val)) = db.get_content_by_id(real_id) {
                     if let Some(ref manager) = state.manager {
@@ -68,7 +59,7 @@ pub fn start_daemon(db: ClipboardDb, verbose: bool) {
                         }
                         
                         state.target_mime = mime;
-                        state.rx_buf = val;
+                        state.tx_buf = val;
                         state.is_provider = true;
 
                         if let Some(ref device) = state.device {
@@ -76,14 +67,30 @@ pub fn start_daemon(db: ClipboardDb, verbose: bool) {
                             let _ = conn.flush();
                         }
                         state.current_source = Some(source);
-                        if verbose { println!("{}", log_restore(real_id as usize)); }
+                        
+                        if state.verbose { 
+                            println!("{}", log_restore(real_id as usize)); 
+                        }
                     }
                 }
             }
         }
 
-        let _ = event_queue.dispatch_pending(&mut state);
+        // 2. Refresh Wayland events with a balanced poll duration
         let _ = conn.flush();
+        let mut poll_fds = [libc::pollfd { 
+            fd: conn.as_fd().as_raw_fd(), 
+            events: libc::POLLIN, 
+            revents: 0 
+        }];
+        
+        // Wait for 100ms for events, allowing the loop to check IPC regularly
+        unsafe { libc::poll(poll_fds.as_mut_ptr(), 1, 100); }
+
+        if let Some(guard) = event_queue.prepare_read() {
+            let _ = guard.read();
+        }
+        let _ = event_queue.dispatch_pending(&mut state);
     }
     
     let _ = fs::remove_file(&socket_path);
