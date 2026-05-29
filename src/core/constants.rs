@@ -81,3 +81,11 @@ pub fn log_seat_detected(name: &str, caps: &str) -> String {
 pub fn log_protocol_bound(interface: &str) -> String {
     format!("{}bound to wayland interface: {}", LOG_INFO, interface)
 }
+
+/// Path to the Unix Domain Socket for Inter-Process Communication.
+pub const SOCKET_PATH: &str = "/tmp/y1-clipboard.sock";
+
+/// Returns the user-specific socket path to prevent multi-user conflicts.
+pub fn get_socket_path() -> String {
+    format!("{}.{}.sock", SOCKET_PATH, unsafe { libc::getuid() })
+}

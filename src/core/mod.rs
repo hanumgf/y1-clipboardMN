@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use std::fs;
 use std::sync::atomic::{AtomicBool, Ordering};
 use crate::core::constants::{DB_DIR_NAME, DB_FILE_NAME};
+pub use self::constants::get_socket_path; 
 
 /// Global atomic signal to coordinate graceful process termination across threads.
 pub static SIG_EXIT: AtomicBool = AtomicBool::new(false);
