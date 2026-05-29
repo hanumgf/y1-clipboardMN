@@ -10,10 +10,15 @@ mod cli;
 use crate::core::constants::*;
 
 fn main() {
+
+    // Security & Stability: Ignore SIGPIPE to prevent the daemon from being
+    // terminated by the OS when a pipe is closed prematurely by a receiver.
+    unsafe { libc::signal(libc::SIGPIPE, libc::SIG_IGN); }
+
     // 1. Initialize signal handler for graceful shutdown
     ctrlc::set_handler(move || {
         if crate::core::is_exiting() {
-            // 🚨 Emergency Exit: Force terminate if Ctrl+C is pressed again
+            // Emergency Exit: Force terminate if Ctrl+C is pressed again
             eprintln!("\n{}forceful termination initiated.", LOG_ERROR);
             std::process::exit(1);
         }
