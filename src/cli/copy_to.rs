@@ -16,63 +16,6 @@ pub fn run(args: &[String], db: ClipboardDb) {
         return;
     }
 
-    // let input_str = match ctx.positionals.first() {
-    //     Some(s) => s,
-    //     None => {
-    //         eprintln!("{}missing required identifier.", LOG_ERROR);
-    //         return;
-    //     }
-    // };
-
-    // let val = match input_str.parse::<i64>() {
-    //     Ok(v) => v,
-    //     Err(_) => {
-    //         eprintln!("{}invalid numerical value: '{}'", LOG_ERROR, input_str);
-    //         return;
-    //     }
-    // };
-
-    // let real_id = if ctx.use_id {
-    //     val
-    // } else {
-    //     let meta = db.fetch_metadata(MAX_HISTORY);
-    //     match meta.get(val as usize) {
-    //         Some(&(id, ..)) => id,
-    //         None => {
-    //             eprintln!("{}index [{}] is out of bounds.", LOG_ERROR, val);
-    //             return;
-    //         }
-    //     }
-    // };
-
-    // if let Err(e) = db.update_timestamp(real_id) {
-    //     eprintln!("{}storage update failure: {}", LOG_ERROR, e);
-    //     return;
-    // }
-
-    // match env::current_exe() {
-    //     Ok(exe) => {
-    //         let status = Command::new(exe)
-    //             .arg("serve-internal")
-    //             .arg(real_id.to_string())
-    //             .arg(ctx.verbose.to_string())
-    //             .stdin(Stdio::null())
-    //             .stdout(Stdio::null())
-    //             .stderr(Stdio::null())
-    //             .spawn();
-
-    //         if status.is_ok() {
-    //             if ctx.verbose {
-    //                 println!("{}", log_restore(real_id as usize));
-    //             }
-    //         } else {
-    //             eprintln!("{}failed to spawn background synchronization worker.", LOG_ERROR);
-    //         }
-    //     }
-    //     Err(e) => eprintln!("{}executable path resolution error: {}", LOG_ERROR, e),
-    // }
-
-
     let input_str = match ctx.positionals.first() {
         Some(s) => s,
         None => { eprintln!("{}missing ID.", LOG_ERROR); return; }

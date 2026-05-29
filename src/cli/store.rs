@@ -5,8 +5,6 @@ use crate::storage::ClipboardDb;
 use crate::core::constants::*;
 use crate::cli::utils::ArgContext;
 use std::io::{self, Read};
-use std::process::{Command, Stdio};
-use std::env;
 
 /// Ingest data from stdin, persist to database, and synchronize to system clipboard.
 pub fn run(args: &[String], mut db: ClipboardDb) {
@@ -49,34 +47,24 @@ pub fn run(args: &[String], mut db: ClipboardDb) {
                 println!("{}", log_save(mime, buffer.len()));
             }
 
-            // Retrieve the record ID for the newly committed entry
+            // Obtain the record identifier for the entry just processed
             let meta = db.fetch_metadata(1);
             if let Some(&(real_id, _, _, _, _)) = meta.first() {
                 
-                // Spawn the background worker to claim Wayland selection ownership
-                match env::current_exe() {
-                    Ok(exe) => {
-                        let status = Command::new(exe)
-                            .arg("serve-internal")
-                            .arg(real_id.to_string())
-                            .arg(ctx.verbose.to_string())
-                            .stdin(Stdio::null())
-                            .stdout(Stdio::null())
-                            .stderr(Stdio::null())
-                            .spawn();
+                // IPC: Notify the running daemon to synchronize this new ID
+                use std::os::unix::net::UnixStream;
+                if let Ok(mut stream) = UnixStream::connect(crate::core::get_socket_path()) {
+                    use std::io::Write;
+                    let _ = stream.write_all(real_id.to_string().as_bytes());
+                }
 
-                        if status.is_ok() {
-                            if ctx.verbose {
-                                println!("{}background synchronization initialized.", LOG_INFO);
-                            }
-                        } else {
-                            eprintln!("{}failed to spawn background synchronization process.", LOG_ERROR);
-                        }
-                    }
-                    Err(e) => eprintln!("{}binary path resolution error: {}", LOG_ERROR, e),
+                if ctx.verbose {
+                    println!("{}system clipboard synchronized.", LOG_INFO);
                 }
             }
         }
-        Err(e) => eprintln!("{}storage transaction failure: {}", LOG_ERROR, e),
+        Err(e) => {
+            eprintln!("{}database transaction failure: {}", LOG_ERROR, e);
+        }
     }
 }
