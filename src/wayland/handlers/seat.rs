@@ -38,12 +38,10 @@ impl Dispatch<wl_seat::WlSeat, ()> for WaylandState {
             }
 
             // Robustness: Handle seat identification name strings (e.g., "seat0")
-            wl_seat::Event::Name { name } => {
-                if state.verbose {
+            wl_seat::Event::Name { name } if state.verbose => {
                     // Pinpoint active tracking targets to streamline diagnostic processes
                     // and eliminate silent ingestion deadlocks in multi-seat profiles.
                     println!("{}", log_seat_detected(&name, "identified"));
-                }
             }
             _ => {}
         }
