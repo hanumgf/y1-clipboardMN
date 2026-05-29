@@ -6,6 +6,7 @@ use wayland_client::protocol::wl_seat::WlSeat;
 use wayland_protocols::ext::data_control::v1::client::{
     ext_data_control_device_v1::ExtDataControlDeviceV1,
     ext_data_control_manager_v1::ExtDataControlManagerV1,
+    ext_data_control_source_v1::ExtDataControlSourceV1
 };
 use std::sync::{Arc, Mutex};
 
@@ -26,6 +27,7 @@ pub struct WaylandState {
     pub last_data: Vec<u8>,
     pub is_provider: bool,
     pub selection_received: bool,
+    pub current_source: Option<ExtDataControlSourceV1>,
 }
 
 impl WaylandState {
@@ -42,6 +44,7 @@ impl WaylandState {
             last_data: Vec::new(),
             is_provider: false,
             selection_received: false,
+            current_source: None,
         }
     }
 
@@ -58,6 +61,7 @@ impl WaylandState {
             last_data: Vec::new(),
             is_provider: false,
             selection_received: false,
+            current_source: None,
         }
     }
 }
